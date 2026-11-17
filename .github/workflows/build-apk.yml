@@ -7,6 +7,8 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -73,3 +75,16 @@ jobs:
           name: koudai-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: 发布到 Releases（方便手机直接下载）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          gh release create "$TAG" \
+            android/app/build/outputs/apk/debug/app-debug.apk \
+            --title "口袋对话 $TAG" \
+            --notes "自动构建 · 由 GitHub Actions 生成" \
+            || echo "发布跳过（可能已存在）"
+          echo "下载地址："
+          echo "${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/app-debug.apk"
