@@ -21,12 +21,22 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: 安装编译需要的 SDK 组件
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
       - name: 安装 Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+
+      - name: 打印环境（出问题时好排查）
+        working-directory: android
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          gradle --version
 
       - name: 把网页资源放进 assets
         working-directory: android
