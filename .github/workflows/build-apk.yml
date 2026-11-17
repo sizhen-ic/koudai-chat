@@ -7,6 +7,9 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - name: 取出代码
         uses: actions/checkout@v4
@@ -17,26 +20,35 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 准备 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 安装编译需要的 SDK 组件
+      - name: 检查自带的 Android SDK
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME" 2>/dev/null || echo "没有这个目录"
+          echo "--- platforms ---"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null || true
+          echo "--- build-tools ---"
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || true
+          echo "--- cmdline-tools ---"
+          ls "$ANDROID_HOME/cmdline-tools" 2>/dev/null || true
+
+      - name: 缺组件就补装（通常不需要）
+        run: |
+          SDK="$ANDROID_HOME"
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -d "$SDK/platforms/android-34" ]; then
+            if [ -x "$SM" ]; then
+              yes | "$SM" --licenses > /dev/null 2>&1 || true
+              "$SM" "platforms;android-34" "build-tools;34.0.0" || true
+            else
+              echo "找不到 sdkmanager，无法补装"
+            fi
+          fi
+          ls "$SDK/platforms" || true
 
       - name: 安装 Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-
-      - name: 打印环境（出问题时好排查）
-        working-directory: android
-        run: |
-          echo "JAVA_HOME=$JAVA_HOME"
-          java -version
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          gradle --version
 
       - name: 把网页资源放进 assets
         working-directory: android
@@ -50,7 +62,10 @@ jobs:
 
       - name: 编译 debug APK
         working-directory: android
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          java -version
+          gradle --version
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4
