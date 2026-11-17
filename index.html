@@ -331,7 +331,19 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     </div>
     <div class="field">
       <label>系统提示词</label>
-      <textarea id="fSystem" placeholder="设定它的身份和说话方式"></textarea>
+      <textarea id="fSystem" placeholder="留空 = 和官方 App 一样的默认风格"></textarea>
+      <div class="hint">想让它换个身份或语气才填。填了会明显改变回答风格。</div>
+    </div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:10px;color:var(--fg);font-size:14px">
+        <input type="checkbox" id="fReminder" style="width:18px;height:18px;flex:0 0 auto">
+        <span>告诉模型今天几号（官方网页端也这么做）</span>
+      </label>
+      <div class="hint">每轮附带「日期,星期,所在地,App,中文」，让回答贴合当下。</div>
+    </div>
+    <div class="field">
+      <label>所在地（可留空）</label>
+      <input type="text" id="fLocation" placeholder="例如：杭州">
     </div>
     <div class="field">
       <label>温度 <span id="tempVal" style="color:var(--fg3)"></span></label>
@@ -660,10 +672,12 @@ const DEFAULTS = {
   model: 'deepseek-flash',
   budget: 32000,
   temperature: 0.7,
-  think: false,
+  think: true,
   web: false,
   richLayout: false,
-  system: '你是一个可靠、有耐心的对话助手。用用户使用的语言回答。回答自然、具体，不要堆砌客套话。',
+  reminder: true,
+  v: 2,
+  system: '',
 };
 const BUILTIN_MODELS = ['deepseek-flash', 'deepseek-v4-pro'];
 
@@ -685,6 +699,15 @@ function newConv() {
 
 async function loadAll() {
   S.settings = Object.assign({}, DEFAULTS, (await idbGet('meta', 'settings')) || {});
+
+  // v2 迁移：思考模式改回官方默认（开），并清掉旧的硬编码系统提示词
+  if ((S.settings.v || 1) < 2) {
+    S.settings.think = true;
+    if (!S.settings.system || S.settings.system.indexOf('有耐心的对话助手') >= 0) S.settings.system = '';
+    S.settings.v = 2;
+    await saveSettings();
+  }
+
   S.convs = await idbAll('convs');
   const saved = await idbGet('meta', 'models');
   if (Array.isArray(saved) && saved.length) S.models = saved;
@@ -1054,6 +1077,15 @@ function pickModel() {
   openSheet('选择模型', items);
 }
 
+/** 官方网页端每轮都告诉模型的元信息：日期,星期,地点,平台,语言 */
+function reminderLine() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const wd = '星期' + '日一二三四五六'[d.getDay()];
+  const loc = (S.settings.location || '').replace(/,/g, ' ');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ',' + wd + ',' + loc + ',App,中文';
+}
+
 function buildChatBody(messages) {
   const body = { model: S.settings.model, messages, stream: true };
   if (S.settings.think) {
@@ -1076,16 +1108,28 @@ async function chatStream(messages, signal, onDelta, onReasoning) {
   const body = buildChatBody(messages);
   let res = await apiFetch('/chat/completions', { method: 'POST', body: JSON.stringify(body), signal });
 
-  // 个别端点/版本不认 thinking 参数：去掉它重试一次，别让整条消息废掉
-  if (!res.ok && res.status === 400 && body.thinking) {
+  // 400 兜底：逐项摘掉不被接受的可选参数，别让一条消息直接废掉
+  for (let attempt = 0; !res.ok && res.status === 400 && attempt < 3; attempt++) {
     const txt = await res.text().catch(() => '');
-    if (/thinking|reasoning/i.test(txt)) {
+    let changed = false;
+
+    if (/latest_reminder/i.test(txt) && body.reminder !== false) {
+      body.reminder = false;
+      body.messages = buildRequestMessages(S.current).filter((m) => m.role !== 'latest_reminder');
+      S.settings.reminder = false;
+      saveSettings();
+      changed = true;
+    } else if (/reasoning_content/i.test(txt)) {
+      if (body.tools) { delete body.tools; changed = true; }
+      else if (body.thinking) { delete body.thinking; delete body.reasoning_effort; changed = true; }
+    } else if (body.thinking && /thinking|reasoning/i.test(txt)) {
       delete body.thinking;
       delete body.reasoning_effort;
-      res = await apiFetch('/chat/completions', { method: 'POST', body: JSON.stringify(body), signal });
-    } else {
-      throw new ApiError(400, txt);
+      changed = true;
     }
+
+    if (!changed) throw new ApiError(400, txt);
+    res = await apiFetch('/chat/completions', { method: 'POST', body: JSON.stringify(body), signal });
   }
 
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''));
@@ -1340,16 +1384,31 @@ function buildRequestMessages(conv) {
   for (const m of conv.messages) {
     if (m.archived) continue;
     if (m.role !== 'user' && m.role !== 'assistant') continue;
+
+    if (m.role === 'assistant') {
+      const a = { role: 'assistant', content: m.content || '' };
+      // 带 tools 的请求必须回传 reasoning_content，否则接口报 400
+      if (m.reasoning) a.reasoning_content = m.reasoning;
+      if (m.content) msgs.push(a);
+      continue;
+    }
+
     if (m.atts && m.atts.length) {
       const blocks = [];
       if (m.content) blocks.push({ type: 'text', text: m.content });
-      for (const a of m.atts) {
-        if (a.fileId) blocks.push({ type: 'file', file_id: a.fileId });
+      for (const at of m.atts) {
+        if (at.fileId) blocks.push({ type: 'file', file_id: at.fileId });
       }
-      if (blocks.length) { msgs.push({ role: 'user', content: blocks }); continue; }
+      if (blocks.length) {
+        if (S.settings.reminder) msgs.push({ role: 'latest_reminder', content: reminderLine() });
+        msgs.push({ role: 'user', content: blocks });
+        continue;
+      }
     }
+
     if (!m.content) continue;
-    msgs.push({ role: m.role, content: m.content });
+    if (S.settings.reminder) msgs.push({ role: 'latest_reminder', content: reminderLine() });
+    msgs.push({ role: 'user', content: m.content });
   }
   return msgs;
 }
@@ -1569,6 +1628,8 @@ function openSettings() {
   $('#fTemp').value = S.settings.temperature;
   $('#tempVal').textContent = Number(S.settings.temperature).toFixed(1);
   if ($('#fRichLayout')) $('#fRichLayout').checked = !!S.settings.richLayout;
+  if ($('#fReminder')) $('#fReminder').checked = S.settings.reminder !== false;
+  if ($('#fLocation')) $('#fLocation').value = S.settings.location || '';
   $('#testout').textContent = '';
   updateStoreInfo();
   $('#settings').classList.add('show');
@@ -1583,6 +1644,8 @@ function saveSettingsFromForm() {
   S.settings.system = $('#fSystem').value;
   S.settings.temperature = parseFloat($('#fTemp').value);
   if ($('#fRichLayout')) S.settings.richLayout = !!$('#fRichLayout').checked;
+  if ($('#fReminder')) S.settings.reminder = !!$('#fReminder').checked;
+  if ($('#fLocation')) S.settings.location = $('#fLocation').value.trim();
   saveSettings();
   updateChrome();
 }
