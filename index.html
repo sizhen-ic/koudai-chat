@@ -13,6 +13,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="katex/katex.min.css">
+<script src="katex/katex.min.js"></script>
 <style>
 :root{
   --bg:#0e0f12; --bg2:#15171c; --bg3:#1c1f26; --line:#2a2e37; --line2:#232730;
@@ -83,6 +85,9 @@ header{
 .bubble th,.bubble td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
 .bubble th{background:var(--bg3);font-weight:600}
 .bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.87em;background:var(--bg3);padding:1.5px 5px;border-radius:5px}
+.bubble .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0;margin:.6em 0}
+.bubble .katex{font-size:1.02em}
+.bubble code.tex{white-space:pre-wrap;word-break:break-all;color:var(--danger)}
 .codebox{position:relative;margin:.7em 0}
 .codebox pre{margin:0;padding:12px 13px;background:var(--bg3);border-radius:12px;overflow-x:auto}
 .codebox pre code{background:none;padding:0;font-size:12.6px;line-height:1.55;white-space:pre}
@@ -433,8 +438,50 @@ function splitRow(line) {
   return line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim());
 }
 
+/* ---------- 数学公式：用本地 KaTeX 渲染，失败就退回等宽显示 ---------- */
+function renderMath(tex, display) {
+  try {
+    if (window.katex && typeof window.katex.renderToString === 'function') {
+      return window.katex.renderToString(tex, {
+        displayMode: !!display,
+        throwOnError: false,
+        strict: false,
+        output: 'html',
+        trust: false,
+      });
+    }
+  } catch (e) { /* 退回原文 */ }
+  return '<code class="tex">' + esc(tex) + '</code>';
+}
+
+/** 把 $$..$$、\[..\]、\(..\)、$..$ 抽成占位符，避免被 Markdown 规则破坏 */
+function extractMath(src) {
+  const list = [];
+  const put = (tex, display) => {
+    list.push({ tex: tex.trim(), display });
+    return '\u0001' + (list.length - 1) + '\u0001';
+  };
+  let text = src;
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (m, tex) => put(tex, true));
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (m, tex) => put(tex, true));
+  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (m, tex) => put(tex, false));
+  text = text.replace(/(^|[^\\$\w])\$(?!\s)([^\n$]{1,600}?)(?<!\s)\$(?![\d])/g,
+    (m, pre, tex) => pre + put(tex, false));
+  return { text, list };
+}
+
+function restoreMath(html, list) {
+  if (!list.length) return html;
+  return html.replace(/\u0001(\d+)\u0001/g, (m, i) => {
+    const item = list[Number(i)];
+    return item ? renderMath(item.tex, item.display) : '';
+  });
+}
+
 function md(src) {
-  const lines = String(src == null ? '' : src).replace(/\r\n/g, '\n').split('\n');
+  const raw = String(src == null ? '' : src).replace(/\r\n/g, '\n');
+  const { text: safeText, list: mathList } = extractMath(raw);
+  const lines = safeText.split('\n');
   let out = '';
   let i = 0;
   const isBlockStart = (l) =>
@@ -505,7 +552,7 @@ function md(src) {
     }
     out += '<p>' + para.map(inlineMd).join('<br>') + '</p>';
   }
-  return out;
+  return restoreMath(out, mathList);
 }
 
 /* ---------- token 估算 ---------- */

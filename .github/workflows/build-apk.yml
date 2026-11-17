@@ -60,7 +60,10 @@ jobs:
              ../icon-192.png ../icon-512.png ../icon-maskable-512.png \
              ../apple-touch-icon.png ../favicon.png \
              app/src/main/assets/
+          rm -rf app/src/main/assets/katex
+          cp -r ../katex app/src/main/assets/katex
           ls -la app/src/main/assets/
+          echo "katex 文件数: $(find app/src/main/assets/katex -type f | wc -l)"
 
       - name: 编译 debug APK
         working-directory: android
