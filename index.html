@@ -249,6 +249,36 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:84vw;text-align:center;
 }
 #toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ===== 对齐官方 App 的排版（后置覆盖） ===== */
+body{font-size:17px;line-height:1.78}
+.hinfo b{font-size:16.5px;font-weight:600}
+#messages{padding:16px 16px 10px}
+.turn{margin:0 0 26px}
+.bubble{line-height:1.8;font-size:17px}
+.bubble p{margin:.8em 0}
+.turn.assistant .bubble{background:none;border:0;padding:0;max-width:100%;border-radius:0}
+.turn.user .bubble{font-size:16.5px;border-radius:20px;border-bottom-right-radius:6px;padding:10px 15px;line-height:1.65}
+.bubble li{margin:.35em 0}
+.bubble ul,.bubble ol{margin:.7em 0;padding-left:1.4em}
+.bubble h1,.bubble h2,.bubble h3{margin:1.1em 0 .5em}
+.actbar{margin-top:6px;gap:4px}
+.actbar button{font-size:12px;padding:4px 9px;border-radius:8px;color:var(--fg3)}
+
+#composer{padding:6px 12px calc(env(safe-area-inset-bottom) + 4px)}
+.inputrow{border-radius:26px;padding:10px 18px;min-height:54px;align-items:center}
+#input{font-size:16.5px;line-height:1.5;padding:0;min-height:24px}
+.toolrow{padding:9px 2px 0;gap:8px}
+.chip{padding:7px 14px;font-size:13px;gap:6px;background:transparent;border-color:var(--line);color:var(--fg2)}
+.chip svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;flex:0 0 auto}
+.chip.on{background:rgba(74,125,255,.16);border-color:rgba(74,125,255,.55);color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+.grow{flex:1}
+.roundbtn{flex:0 0 auto;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--fg2);display:grid;place-items:center;cursor:pointer}
+.roundbtn svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round}
+.roundbtn:active{background:var(--bg3)}
+.sendbtn{width:38px;height:38px;font-size:17px;font-weight:600}
+.statusline{padding:7px 8px 0;opacity:.7}
+.footnote{text-align:center;font-size:10.5px;color:var(--fg3);padding-top:2px;opacity:.75}
 </style>
 </head>
 <body>
@@ -269,13 +299,22 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
   <div id="composer">
     <div class="pendingrow" id="pending"></div>
-    <div class="toolrow">
-      <button class="chip" id="chipThink"><span class="dot"></span>深度思考</button>
-      <button class="chip" id="chipWeb"><span class="dot"></span>联网</button>
-      <button class="chip" id="chipAttach">＋ 图片 / 文件</button>
-    </div>
     <div class="inputrow">
-      <textarea id="input" rows="1" placeholder="给口袋发消息…" enterkeyhint="send"></textarea>
+      <textarea id="input" rows="1" placeholder="发消息或按住说话" enterkeyhint="send"></textarea>
+    </div>
+    <div class="toolrow">
+      <button class="chip" id="chipThink">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><ellipse cx="12" cy="12" rx="9.2" ry="3.9"/><ellipse cx="12" cy="12" rx="9.2" ry="3.9" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9.2" ry="3.9" transform="rotate(120 12 12)"/></svg>
+        <span>深度思考</span>
+      </button>
+      <button class="chip" id="chipWeb">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg>
+        <span>联网</span>
+      </button>
+      <span class="grow"></span>
+      <button class="roundbtn" id="chipAttach" aria-label="添加图片或文件">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
       <button class="sendbtn" id="btnSend" aria-label="发送">↑</button>
     </div>
     <input type="file" id="filePick" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.csv,.json,.xlsx,.xls,.epub,.mobi" hidden>
@@ -283,6 +322,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <div class="bar"><i id="ctxBar"></i></div>
       <span id="ctxText">上下文 0%</span>
     </div>
+    <div class="footnote">回答由 AI 生成，仅供参考</div>
   </div>
 </div>
 
