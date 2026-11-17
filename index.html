@@ -92,7 +92,8 @@ header{
 }
 .codebox .cpy:active{background:var(--bg3)}
 
-.actbar{display:flex;gap:2px;margin-top:3px;opacity:.55}
+.actbar{display:none;gap:2px;margin-top:3px;opacity:.75}
+.turn.sel .actbar{display:flex}
 .turn.user .actbar{justify-content:flex-end}
 .actbar button{
   border:0;background:transparent;color:var(--fg3);font-size:11.5px;padding:3px 7px;border-radius:7px;cursor:pointer;
@@ -206,6 +207,37 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .sheetItem small{display:block;color:var(--fg3);font-size:11.5px;margin-top:2px}
 .sheetCancel{width:100%;padding:14px;border:0;border-top:6px solid var(--bg);background:var(--bg2);color:var(--fg2);font-size:15px;cursor:pointer}
 
+/* ---------- 输入区工具条 ---------- */
+#composer{padding-top:4px}
+.toolrow{display:flex;gap:7px;padding:0 3px 7px;overflow-x:auto;scrollbar-width:none;align-items:center}
+.toolrow::-webkit-scrollbar{display:none}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
+  padding:6px 13px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);
+  color:var(--fg2);font-size:12.5px;cursor:pointer;transition:.15s;white-space:nowrap;
+}
+.chip:active{transform:scale(.97)}
+.chip.on{background:color-mix(in srgb,var(--accent) 20%,var(--bg2));border-color:var(--accent);color:var(--fg)}
+.chip .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:none}
+.chip.on .dot{display:block}
+.pendingrow{display:flex;gap:8px;padding:0 3px 8px;overflow-x:auto;scrollbar-width:none}
+.pendingrow::-webkit-scrollbar{display:none}
+.pendingrow:empty{display:none}
+.pchip{
+  position:relative;flex:0 0 auto;display:flex;align-items:center;gap:7px;
+  background:var(--bg3);border:1px solid var(--line);border-radius:11px;padding:5px 9px 5px 6px;font-size:11.5px;max-width:200px;
+}
+.pchip img{width:34px;height:34px;object-fit:cover;border-radius:8px;display:block}
+.pchip .nm{max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg2)}
+.pchip .st{font-size:10px;color:var(--fg3)}
+.pchip.err{border-color:var(--danger)}
+.pchip .rm{border:0;background:none;color:var(--fg3);font-size:14px;padding:0 2px;cursor:pointer}
+.atts{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.atts img{max-width:210px;max-height:210px;border-radius:11px;display:block}
+.filecard{display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--bg3);border-radius:10px;font-size:12.5px;color:var(--fg2)}
+.filecard b{font-weight:500;color:var(--fg);max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- toast ---------- */
 #toast{
   position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 86px);transform:translate(-50%,12px);
   background:#000d;color:#fff;padding:9px 17px;border-radius:999px;font-size:13px;z-index:90;
@@ -231,10 +263,17 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </div>
 
   <div id="composer">
+    <div class="pendingrow" id="pending"></div>
+    <div class="toolrow">
+      <button class="chip" id="chipThink"><span class="dot"></span>深度思考</button>
+      <button class="chip" id="chipWeb"><span class="dot"></span>联网</button>
+      <button class="chip" id="chipAttach">＋ 图片 / 文件</button>
+    </div>
     <div class="inputrow">
       <textarea id="input" rows="1" placeholder="给口袋发消息…" enterkeyhint="send"></textarea>
       <button class="sendbtn" id="btnSend" aria-label="发送">↑</button>
     </div>
+    <input type="file" id="filePick" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.csv,.json,.xlsx,.xls,.epub,.mobi" hidden>
     <div class="statusline">
       <div class="bar"><i id="ctxBar"></i></div>
       <span id="ctxText">上下文 0%</span>
@@ -279,7 +318,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <input type="text" id="fModel" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="deepseek-chat">
         <button class="btn" id="btnModels" style="flex:0 0 88px">拉列表</button>
       </div>
-      <div class="hint">deepseek-chat 日常对话；deepseek-reasoner 会先思考再回答。</div>
+      <div class="hint">deepseek-flash：1M 上下文、支持图片和联网，日常用这个；deepseek-v4-pro：更强也更贵。</div>
     </div>
     <button class="btn" id="btnTest">测试连接</button>
     <div id="testout"></div>
@@ -297,6 +336,15 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <div class="field">
       <label>温度 <span id="tempVal" style="color:var(--fg3)"></span></label>
       <input type="range" id="fTemp" min="0" max="1.5" step="0.1">
+    </div>
+
+    <div class="section">文件</div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:10px;color:var(--fg);font-size:14px">
+        <input type="checkbox" id="fRichLayout" style="width:18px;height:18px;flex:0 0 auto">
+        <span>解析文档时包含里面的图片</span>
+      </label>
+      <div class="hint">关：只提取文字，快且便宜。开：图表、照片一起交给模型（按页计费）。只影响 PDF / Word / PPT。</div>
     </div>
 
     <div class="section">数据</div>
@@ -612,6 +660,9 @@ const DEFAULTS = {
   model: 'deepseek-flash',
   budget: 32000,
   temperature: 0.7,
+  think: false,
+  web: false,
+  richLayout: false,
   system: '你是一个可靠、有耐心的对话助手。用用户使用的语言回答。回答自然、具体，不要堆砌客套话。',
 };
 const BUILTIN_MODELS = ['deepseek-flash', 'deepseek-v4-pro'];
@@ -624,6 +675,8 @@ const S = {
   models: BUILTIN_MODELS.slice(),
   installEvt: null,
   search: '',
+  pending: [],
+  sel: -1,
 };
 
 function newConv() {
@@ -670,6 +723,7 @@ function updateChrome() {
   $('#ctxText').textContent = u.used
     ? '上下文 ' + u.pct + '% · ' + (u.used >= 1000 ? (u.used / 1000).toFixed(1) + 'k' : u.used) + ' / ' + Math.round(u.budget / 1000) + 'k'
     : '上下文 0%';
+  updateToggles();
 }
 
 /* =========================================================
@@ -692,11 +746,32 @@ function makeTurn(m, index, total) {
     bubble.appendChild(d);
   }
 
+  if (m.atts && m.atts.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'atts';
+    for (const a of m.atts) {
+      if (a.kind === 'image' && a.thumb) {
+        const im = document.createElement('img');
+        im.src = a.thumb;
+        im.alt = a.name || '图片';
+        im.loading = 'lazy';
+        wrap.appendChild(im);
+      } else {
+        const card = document.createElement('div');
+        card.className = 'filecard';
+        card.innerHTML = '📄 <b>' + esc(a.name || '文件') + '</b>';
+        wrap.appendChild(card);
+      }
+    }
+    bubble.appendChild(wrap);
+  }
+
   const body = document.createElement('div');
   body.className = 'body';
-  body.innerHTML = m.content ? md(m.content) : '<span style="color:var(--fg3)">…</span>';
+  body.innerHTML = m.content ? md(m.content) : (m.atts && m.atts.length ? '' : '<span style="color:var(--fg3)">…</span>');
   bubble.appendChild(body);
   row.appendChild(bubble);
+  if (index === S.sel) row.classList.add('sel');
 
   const bar = document.createElement('div');
   bar.className = 'actbar';
@@ -979,12 +1054,40 @@ function pickModel() {
   openSheet('选择模型', items);
 }
 
+function buildChatBody(messages) {
+  const body = { model: S.settings.model, messages, stream: true };
+  if (S.settings.think) {
+    body.thinking = { type: 'enabled' };
+    body.reasoning_effort = 'high';
+  } else {
+    body.thinking = { type: 'disabled' };
+    body.temperature = Number(S.settings.temperature);
+  }
+  if (S.settings.web) {
+    body.tools = [
+      { type: 'deepseek_web_search', name: 'deepseek_web_search' },
+      { type: 'deepseek_read_url', name: 'deepseek_read_url' },
+    ];
+  }
+  return body;
+}
+
 async function chatStream(messages, signal, onDelta, onReasoning) {
-  const res = await apiFetch('/chat/completions', {
-    method: 'POST',
-    body: JSON.stringify({ model: S.settings.model, messages, stream: true, temperature: Number(S.settings.temperature) }),
-    signal,
-  });
+  const body = buildChatBody(messages);
+  let res = await apiFetch('/chat/completions', { method: 'POST', body: JSON.stringify(body), signal });
+
+  // 个别端点/版本不认 thinking 参数：去掉它重试一次，别让整条消息废掉
+  if (!res.ok && res.status === 400 && body.thinking) {
+    const txt = await res.text().catch(() => '');
+    if (/thinking|reasoning/i.test(txt)) {
+      delete body.thinking;
+      delete body.reasoning_effort;
+      res = await apiFetch('/chat/completions', { method: 'POST', body: JSON.stringify(body), signal });
+    } else {
+      throw new ApiError(400, txt);
+    }
+  }
+
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''));
   if (!res.body) throw new Error('浏览器不支持流式响应');
 
@@ -1087,6 +1190,144 @@ async function maybeCompact(conv) {
 }
 
 /* =========================================================
+   附件：上传到 Files API，对话里用 file_id 引用
+   ========================================================= */
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp)$/i;
+const DOC_EXT = /\.(pdf|doc|docx|ppt|pptx)$/i;
+
+function rawBase() {
+  const b = (S.settings.baseUrl || '').trim().replace(/\/+$/, '');
+  return b || 'https://api.deepseek.com';
+}
+
+/** Files API 在根路径上（不带 /v1） */
+function filesEndpoint() {
+  const b = rawBase();
+  return (/\/v1$/i.test(b) ? b.replace(/\/v1$/i, '') : b) + '/files';
+}
+
+function purposeOf(file) {
+  const name = (file.name || '').toLowerCase();
+  const type = file.type || '';
+  if (type.indexOf('image/') === 0 || IMAGE_EXT.test(name)) return 'user_data';
+  if (DOC_EXT.test(name)) return S.settings.richLayout ? 'rich_layout_recognition' : 'text_recognition';
+  return 'user_data'; // 文本 / 表格 / 电子书：服务端自动转 Markdown，不计费
+}
+
+function humanSize(n) {
+  if (!n) return '';
+  if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n > 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+/** 生成缩略图，只用于消息里显示；上传的始终是原图 */
+function makeThumb(file) {
+  return new Promise((resolve) => {
+    if (!/^image\//.test(file.type || '')) { resolve(''); return; }
+    let url;
+    try { url = URL.createObjectURL(file); } catch (e) { resolve(''); return; }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const max = 320;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(cv.toDataURL('image/jpeg', 0.72));
+      } catch (e) { resolve(''); }
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
+    img.src = url;
+  });
+}
+
+/** multipart 上传；purpose 必须排在 file 字段之前 */
+async function uploadToFiles(file, purpose) {
+  const fd = new FormData();
+  fd.append('purpose', purpose);
+  fd.append('file', file, file.name || 'file');
+  const headers = {};
+  if (S.settings.apiKey) headers['Authorization'] = 'Bearer ' + S.settings.apiKey;
+  let res;
+  try {
+    res = await fetch(filesEndpoint(), { method: 'POST', body: fd, headers });
+  } catch (e) {
+    throw new Error('网络中断');
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error('HTTP ' + res.status + ' ' + t.slice(0, 120));
+  }
+  const j = await res.json().catch(() => null);
+  if (!j || !j.id) throw new Error('没有返回 file_id');
+  return j.id;
+}
+
+async function addFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (!S.settings.apiKey) { toast('先填 API Key 才能上传附件'); openSettings(); return; }
+
+  for (const f of files) {
+    const isImage = /^image\//.test(f.type || '') || IMAGE_EXT.test(f.name || '');
+    if (isImage && f.size > 64 * 1024 * 1024) { toast(f.name + ' 超过 64 MB'); continue; }
+    if (!isImage && f.size > 100 * 1024 * 1024) { toast(f.name + ' 超过 100 MB'); continue; }
+
+    const item = {
+      id: uid(), file: f, name: f.name || 'file', size: f.size || 0,
+      kind: isImage ? 'image' : 'file',
+      thumb: '', fileId: null, status: 'uploading', error: '',
+    };
+    S.pending.push(item);
+    renderPending();
+
+    item.thumb = await makeThumb(f);
+    renderPending();
+
+    try {
+      item.fileId = await uploadToFiles(f, purposeOf(f));
+      item.status = 'ready';
+    } catch (e) {
+      item.status = 'error';
+      item.error = e.message || String(e);
+      toast('上传失败：' + item.name, 2600);
+    }
+    renderPending();
+  }
+}
+
+function removePending(id) {
+  S.pending = S.pending.filter((x) => x.id !== id);
+  renderPending();
+}
+
+function renderPending() {
+  const box = $('#pending');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const p of S.pending) {
+    const d = document.createElement('div');
+    d.className = 'pchip' + (p.status === 'error' ? ' err' : '');
+    const label = p.status === 'uploading' ? '上传中…'
+      : p.status === 'error' ? '失败'
+      : (p.kind === 'image' ? '图片' : humanSize(p.size));
+    d.innerHTML = (p.thumb ? '<img src="' + p.thumb + '" alt="">' : '') +
+      '<span class="nm">' + esc(p.name) + '</span><span class="st">' + label + '</span>';
+    const rm = document.createElement('button');
+    rm.className = 'rm';
+    rm.textContent = '✕';
+    rm.addEventListener('click', () => removePending(p.id));
+    d.appendChild(rm);
+    box.appendChild(d);
+  }
+}
+
+/* =========================================================
    发送与生成
    ========================================================= */
 function buildRequestMessages(conv) {
@@ -1099,6 +1340,14 @@ function buildRequestMessages(conv) {
   for (const m of conv.messages) {
     if (m.archived) continue;
     if (m.role !== 'user' && m.role !== 'assistant') continue;
+    if (m.atts && m.atts.length) {
+      const blocks = [];
+      if (m.content) blocks.push({ type: 'text', text: m.content });
+      for (const a of m.atts) {
+        if (a.fileId) blocks.push({ type: 'file', file_id: a.fileId });
+      }
+      if (blocks.length) { msgs.push({ role: 'user', content: blocks }); continue; }
+    }
     if (!m.content) continue;
     msgs.push({ role: m.role, content: m.content });
   }
@@ -1191,11 +1440,14 @@ async function runCompletion() {
   scrollBottom(true);
 }
 
-async function sendUser(text) {
+async function sendUser(text, atts) {
   const conv = S.current;
-  conv.messages.push({ role: 'user', content: text, ts: nowTs() });
+  const msg = { role: 'user', content: text || '', ts: nowTs() };
+  if (atts && atts.length) msg.atts = atts;
+  conv.messages.push(msg);
   if (!conv.title || conv.title === '新的对话') {
-    conv.title = text.slice(0, 22) + (text.length > 22 ? '…' : '');
+    const base = text || (atts && atts[0] && atts[0].name) || '附件';
+    conv.title = base.slice(0, 22) + (base.length > 22 ? '…' : '');
   }
   await saveConv(conv);
   renderMessages();
@@ -1208,11 +1460,18 @@ async function send() {
   if (S.streaming) { try { S.streaming.abort(); } catch (e) {} return; }
   const input = $('#input');
   const text = input.value.trim();
-  if (!text) return;
+  const pending = S.pending.slice();
+  if (!text && !pending.length) return;
   if (!S.settings.apiKey) { toast('先去设置里填 API Key'); openSettings(); return; }
+  if (pending.some((p) => p.status === 'uploading')) { toast('附件还在上传，稍等一下'); return; }
+  if (pending.some((p) => p.status === 'error')) { toast('有附件上传失败，先点 ✕ 删掉它'); return; }
+
+  const atts = pending.map((p) => ({ kind: p.kind, name: p.name, fileId: p.fileId, thumb: p.thumb, size: p.size }));
+  S.pending = [];
+  renderPending();
   input.value = '';
   autosize();
-  await sendUser(text);
+  await sendUser(text, atts);
 }
 
 /* =========================================================
@@ -1227,6 +1486,14 @@ async function copyText(t) {
     try { document.execCommand('copy'); toast('已复制'); } catch (e2) { toast('复制失败'); }
     ta.remove();
   }
+}
+
+function selectTurn(i) {
+  S.sel = i;
+  const box = msgEl();
+  Array.prototype.forEach.call(box.querySelectorAll('.turn'), (el) => {
+    el.classList.toggle('sel', parseInt(el.dataset.i, 10) === i);
+  });
 }
 
 function msgMenu(index) {
@@ -1301,6 +1568,7 @@ function openSettings() {
   $('#fSystem').value = S.settings.system || '';
   $('#fTemp').value = S.settings.temperature;
   $('#tempVal').textContent = Number(S.settings.temperature).toFixed(1);
+  if ($('#fRichLayout')) $('#fRichLayout').checked = !!S.settings.richLayout;
   $('#testout').textContent = '';
   updateStoreInfo();
   $('#settings').classList.add('show');
@@ -1314,6 +1582,7 @@ function saveSettingsFromForm() {
   S.settings.budget = Math.max(4000, parseInt($('#fBudget').value, 10) || DEFAULTS.budget);
   S.settings.system = $('#fSystem').value;
   S.settings.temperature = parseFloat($('#fTemp').value);
+  if ($('#fRichLayout')) S.settings.richLayout = !!$('#fRichLayout').checked;
   saveSettings();
   updateChrome();
 }
@@ -1376,6 +1645,37 @@ $('#btnNew').addEventListener('click', newConversation);
 $('#btnNew2').addEventListener('click', newConversation);
 $('#btnSettings').addEventListener('click', openSettings);
 $('#btnModel').addEventListener('click', pickModel);
+
+/* ---------- 输入区工具条 ---------- */
+function updateToggles() {
+  const th = $('#chipThink');
+  const wb = $('#chipWeb');
+  if (th) th.classList.toggle('on', !!S.settings.think);
+  if (wb) wb.classList.toggle('on', !!S.settings.web);
+  if (wb) wb.style.opacity = /^deepseek-flash/.test(S.settings.model || '') ? '' : '.45';
+}
+
+$('#chipThink').addEventListener('click', () => {
+  S.settings.think = !S.settings.think;
+  saveSettings();
+  updateToggles();
+  toast(S.settings.think ? '深度思考：开（会更慢，也更贵）' : '深度思考：关');
+});
+$('#chipWeb').addEventListener('click', () => {
+  if (!/^deepseek-flash/.test(S.settings.model || '')) {
+    toast('联网工具只支持 deepseek-flash 模型', 2600);
+    return;
+  }
+  S.settings.web = !S.settings.web;
+  saveSettings();
+  updateToggles();
+  toast(S.settings.web ? '联网：开（模型会自己决定搜不搜）' : '联网：关');
+});
+$('#chipAttach').addEventListener('click', () => $('#filePick').click());
+$('#filePick').addEventListener('change', (e) => {
+  addFiles(e.target.files);
+  e.target.value = '';
+});
 $('#btnCloseSettings').addEventListener('click', closeSettings);
 $('#btnSave').addEventListener('click', () => { saveSettingsFromForm(); closeSettings(); toast('已保存'); });
 $('#btnTest').addEventListener('click', testConnection);
@@ -1450,6 +1750,14 @@ msgEl().addEventListener('click', (e) => {
   if (btn) {
     const turn = btn.closest('.turn');
     if (turn) msgMenu(parseInt(turn.dataset.i, 10));
+    return;
+  }
+  const turnEl = t && t.closest ? t.closest('.turn') : null;
+  if (turnEl) {
+    const idx = parseInt(turnEl.dataset.i, 10);
+    selectTurn(S.sel === idx ? -1 : idx);
+  } else if (S.sel !== -1) {
+    selectTurn(-1);
   }
 });
 
@@ -1504,6 +1812,7 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
   renderMessages();
   updateChrome();
   renderConvList();
+  renderPending();
   if (!S.settings.apiKey) setTimeout(() => toast('先点右上角 ⚙ 填 API Key'), 800);
   if (STORE_MODE === 'ls') setTimeout(() => toast('本地文件模式容量有限，建议用网址打开', 3200), 2200);
 })();

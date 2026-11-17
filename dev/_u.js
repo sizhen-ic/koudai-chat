@@ -1,2 +1,0 @@
-﻿const urls = ['https://deepseek-ai.github.io/chat-demo/','https://cdn.deepseek.com/chat-demo/static/js/main.9820cd3a.js','https://cdn.deepseek.com/chat-demo/static/css/main.7361e32c.css'];
-(async()=>{ for (const u of urls){ try{ const r=await fetch(u,{headers:{'User-Agent':'p'}}); console.log(u+' -> '+r.status+' '+(r.headers.get('content-type')||'')+' '+(r.headers.get('content-length')||'?')); }catch(e){ console.log(u+' -> ERR '+e.message);} } })();
