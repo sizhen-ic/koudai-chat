@@ -98,8 +98,9 @@ setTimeout(async () => {
   ok('md 代码块 + 复制按钮', /<div class="codebox"><button class="cpy"/.test(K.md('```js\nlet a=1;\n```')), K.md('```js\nlet a=1;\n```').slice(0, 80));
   ok('md 代码块转义', K.md('```\na < b && c > d\n```').includes('&lt;') && !K.md('```\na<b\n```').includes('a<b'));
   ok('md 标题', K.md('## 小标题').includes('<h2>小标题</h2>'), K.md('## 小标题'));
-  ok('md 无序列表', K.md('- 一\n- 二').includes('<ul><li>一</li><li>二</li></ul>'), K.md('- 一\n- 二'));
-  ok('md 有序列表', K.md('1. 一\n2. 二').includes('<ol><li>一</li><li>二</li></ol>'), K.md('1. 一\n2. 二'));
+  ok('md 无序列表', (function () { const t = K.md('- 一\n- 二'); return t.includes('<ul>') && t.includes('<li>一') && t.includes('<li>二') && t.includes('</ul>'); })(), K.md('- 一\n- 二'));
+  ok('md 有序列表', (function () { const t = K.md('1. 一\n2. 二'); return t.includes('<ol>') && t.includes('<li>一') && t.includes('</ol>'); })(), K.md('1. 一\n2. 二'));
+  ok('md 嵌套列表', (function () { const t = K.md('- 一\n  - 二\n    - 三'); return (t.match(/<ul>/g) || []).length === 3 && t.includes('</ul></ul></ul>'); })(), K.md('- 一\n  - 二\n    - 三'));
   ok('md 引用', K.md('> 引用').includes('<blockquote>引用</blockquote>'), K.md('> 引用'));
   ok('md 表格', (function () { const t = K.md('| a | b |\n|---|---|\n| 1 | 2 |'); return t.includes('<th>a</th>') && t.includes('<td>1</td>'); })(), K.md('| a | b |\n|---|---|\n| 1 | 2 |'));
   ok('md 链接', K.md('[名字](https://x.com)').includes('<a href="https://x.com"'), K.md('[名字](https://x.com)'));

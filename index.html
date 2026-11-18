@@ -280,7 +280,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .macts button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
 
 /* ===== 对齐官方 App 的排版（后置覆盖） ===== */
-body{font-size:17px;line-height:1.9;font-weight:400;overscroll-behavior:auto;
+body{font-size:16px;line-height:1.85;font-weight:400;overscroll-behavior:auto;
   -webkit-text-size-adjust:100%;text-size-adjust:100%}
 #messages{overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;scroll-behavior:auto}
 #msginner{min-height:100%;will-change:transform}
@@ -290,13 +290,33 @@ body{font-size:17px;line-height:1.9;font-weight:400;overscroll-behavior:auto;
 .turn.assistant.sel .actbar{opacity:1}
 .actbar button svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;display:block}
 .actbar button{padding:5px 8px}
+
+/* 思考过程：官方那种「已思考（用时 N 秒）」+ 缩进层级 */
+details.think{margin:0 0 14px;border-left:0;padding-left:0;font-size:14px;color:var(--fg2)}
+details.think summary{
+  display:flex;align-items:center;gap:6px;font-size:14.5px;color:var(--fg2);
+  list-style:none;padding:2px 0;cursor:pointer;user-select:none;
+}
+details.think summary::-webkit-details-marker{display:none}
+details.think summary::before{content:none}
+details.think summary .chev{font-size:11px;color:var(--fg3);transition:transform .2s;transform:rotate(0deg)}
+details.think[open] summary .chev{transform:rotate(180deg)}
+.think-body{
+  border-left:2px solid var(--line);padding-left:12px;margin-top:8px;
+  line-height:1.75;color:var(--fg2);
+}
+.think-body p{margin:.5em 0}
+.think-body ul,.think-body ol{margin:.4em 0;padding-left:1.15em}
+.think-body li{margin:.3em 0;line-height:1.72}
+.think-body li::marker{color:var(--fg3)}
+.think-body .katex{font-size:.98em}
 .hinfo b{font-size:16.5px;font-weight:600}
 #messages{padding:16px 16px 10px}
 .turn{margin:0 0 26px}
-.bubble{line-height:1.9;font-size:17px;font-weight:400}
+.bubble{line-height:1.85;font-size:16px;font-weight:400}
 .bubble p{margin:1em 0}
 .turn.assistant .bubble{background:none;border:0;padding:0;max-width:100%;border-radius:0}
-.turn.user .bubble{font-size:16.5px;border-radius:20px;border-bottom-right-radius:6px;padding:10px 15px;line-height:1.65}
+.turn.user .bubble{font-size:15.8px;border-radius:20px;border-bottom-right-radius:6px;padding:10px 15px;line-height:1.65}
 .bubble li{margin:.55em 0;line-height:1.85}
 .bubble li::marker{color:var(--fg2)}
 .bubble ul,.bubble ol{margin:.9em 0;padding-left:1.5em}
@@ -633,6 +653,28 @@ function restoreMath(html, list) {
   });
 }
 
+/* 支持缩进层级的列表（官方思考过程那种多级缩进） */
+function renderList(items) {
+  let html = '';
+  const stack = [];
+  const tagOf = (ordered) => (ordered ? 'ol' : 'ul');
+  for (const it of items) {
+    while (stack.length && it.indent < stack[stack.length - 1].indent) {
+      html += '</' + tagOf(stack.pop().ordered) + '>';
+    }
+    if (!stack.length) {
+      html += '<' + tagOf(it.ordered) + '>';
+      stack.push({ indent: it.indent, ordered: it.ordered });
+    } else if (it.indent > stack[stack.length - 1].indent) {
+      html += '<' + tagOf(it.ordered) + '>';
+      stack.push({ indent: it.indent, ordered: it.ordered });
+    }
+    html += '<li>' + inlineMd(it.text);   // </li> 可省略，浏览器会自动闭合
+  }
+  while (stack.length) html += '</' + tagOf(stack.pop().ordered) + '>';
+  return html;
+}
+
 function md(src) {
   const raw = String(src == null ? '' : src).replace(/\r\n/g, '\n');
   const { text: safeText, list: mathList } = extractMath(raw);
@@ -683,16 +725,21 @@ function md(src) {
       continue;
     }
 
-    const ulm = /^\s*[-*+]\s+/.test(line);
-    const olm = /^\s*\d+[.)]\s+/.test(line);
-    if (ulm || olm) {
+    const listRe = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+    const lm = listRe.exec(line);
+    if (lm) {
       const items = [];
-      while (i < lines.length && (/^\s*[-*+]\s+/.test(lines[i]) || /^\s*\d+[.)]\s+/.test(lines[i]))) {
-        items.push(lines[i].replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ''));
+      while (i < lines.length) {
+        const m2 = listRe.exec(lines[i]);
+        if (!m2) break;
+        items.push({
+          indent: m2[1].replace(/\t/g, '  ').length,
+          ordered: /\d/.test(m2[2]),
+          text: m2[3],
+        });
         i++;
       }
-      const tag = ulm ? 'ul' : 'ol';
-      out += '<' + tag + '>' + items.map((t) => '<li>' + inlineMd(t) + '</li>').join('') + '</' + tag + '>';
+      out += renderList(items);
       continue;
     }
 
@@ -968,7 +1015,10 @@ function makeTurn(m, index, total) {
   if (m.role === 'assistant' && m.reasoning) {
     const d = document.createElement('details');
     d.className = 'think';
-    d.innerHTML = '<summary>思考过程</summary><pre>' + esc(m.reasoning) + '</pre>';
+    const secs = m.reasoningMs ? Math.max(1, Math.round(m.reasoningMs / 1000)) : 0;
+    const label = secs ? '已思考（用时 ' + secs + ' 秒）' : '已思考';
+    d.innerHTML = '<summary><span class="ttl">' + label + '</span><span class="chev">▾</span></summary>' +
+      '<div class="think-body">' + md(m.reasoning) + '</div>';
     bubble.appendChild(d);
   }
 
@@ -1657,7 +1707,8 @@ async function runCompletion() {
   const think = document.createElement('details');
   think.className = 'think';
   think.style.display = 'none';
-  think.innerHTML = '<summary>思考过程</summary><pre></pre>';
+  think.innerHTML = '<summary><span class="ttl">思考中…</span><span class="chev">▾</span></summary><div class="think-body"></div>';
+  const thinkBody = think.querySelector('.think-body');
   const body = document.createElement('div');
   body.className = 'body';
   body.innerHTML = '<span class="cursor"></span>';
@@ -1666,6 +1717,33 @@ async function runCompletion() {
   row.appendChild(bubble);
   box.appendChild(row);
   scrollBottom(true);
+
+  // 思考过程：一开始自动展开、跟着滚动；开始出正文后自动收起并记下用时
+  let thinkPaintTimer = 0;
+  let thinkStartedAt = 0;
+  let thinkLastAt = 0;
+  let thinkDone = false;
+
+  const paintThink = () => {
+    thinkPaintTimer = 0;
+    thinkBody.innerHTML = md(reasoning);
+    scrollBottom(false);
+  };
+  const scheduleThink = () => {
+    if (thinkPaintTimer) return;
+    thinkPaintTimer = setTimeout(paintThink, 120);
+  };
+  const finishThink = () => {
+    if (!thinkStartedAt || thinkDone) return;
+    thinkDone = true;
+    clearTimeout(thinkPaintTimer);
+    thinkBody.innerHTML = md(reasoning);
+    const ms = Math.max(0, (thinkLastAt || Date.now()) - thinkStartedAt);
+    const secs = Math.max(1, Math.round(ms / 1000));
+    const ttl = think.querySelector('.ttl');
+    if (ttl) ttl.textContent = '已思考（用时 ' + secs + ' 秒）';
+    think.open = false;
+  };
 
   const ctrl = new AbortController();
   S.streaming = ctrl;
@@ -1706,13 +1784,19 @@ async function runCompletion() {
       buildRequestMessages(conv),
       ctrl.signal,
       (delta) => {
+        if (!full) finishThink();
         full += delta;
         startReveal();
       },
       (r) => {
+        if (!thinkStartedAt) {
+          thinkStartedAt = Date.now();
+          think.style.display = '';
+          think.open = true;
+        }
+        thinkLastAt = Date.now();
         reasoning += r;
-        think.style.display = '';
-        think.querySelector('pre').textContent = reasoning;
+        scheduleThink();
       }
     );
   } catch (e) {
@@ -1725,6 +1809,7 @@ async function runCompletion() {
   S.streaming = null;
   setStreaming(false);
   clearTimeout(revealTimer);
+  finishThink();
 
   if (failed) {
     body.innerHTML = '<span style="color:var(--danger)">' + failed + '</span>';
@@ -1733,7 +1818,13 @@ async function runCompletion() {
   }
 
   if (full) {
-    conv.messages.push({ role: 'assistant', content: full, reasoning: reasoning || undefined, ts: nowTs() });
+    conv.messages.push({
+      role: 'assistant',
+      content: full,
+      reasoning: reasoning || undefined,
+      reasoningMs: reasoning ? Math.max(0, (thinkLastAt || thinkStartedAt) - thinkStartedAt) : 0,
+      ts: nowTs(),
+    });
     await saveConv(conv);
     renderMessages();
   } else {
@@ -2119,13 +2210,44 @@ document.addEventListener('visibilitychange', () => {
   const atTop = () => box.scrollTop <= 0;
   const atBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight <= 1;
 
+  const MAX_ROWS = 18;
+  let touched = [];
+
+  /** 逐行位移：越靠近拉动的一端位移越大，行间距因此被拉开 */
+  function moveRows(off) {
+    const kids = inner.children;
+    const n = kids.length;
+    if (!n) return;
+    const limit = Math.min(n, MAX_ROWS);
+    const down = off > 0;
+    touched = [];
+    for (let k = 0; k < limit; k++) {
+      const el = down ? kids[k] : kids[n - 1 - k];
+      if (!el || !el.style) continue;
+      const w = Math.pow((limit - k) / limit, 1.5);
+      el.style.transition = 'none';
+      el.style.transform = 'translateY(' + (off * w).toFixed(1) + 'px)';
+      touched.push(el);
+    }
+  }
+
+  function resetRows(animate) {
+    const list = touched;
+    touched = [];
+    for (const el of list) {
+      el.style.transition = animate ? 'transform .42s cubic-bezier(.22,1.2,.4,1)' : 'none';
+      el.style.transform = '';
+    }
+    if (animate) {
+      setTimeout(() => { for (const el of list) { if (el.style) el.style.transition = ''; } }, 450);
+    }
+  }
+
   function springBack() {
     if (!active) return;
     active = false;
     offset = 0;
-    inner.style.transition = 'transform .36s cubic-bezier(.22,1.15,.36,1)';
-    inner.style.transform = '';
-    setTimeout(() => { inner.style.transition = ''; }, 380);
+    resetRows(true);
   }
 
   box.addEventListener('touchstart', (e) => {
@@ -2150,7 +2272,7 @@ document.addEventListener('visibilitychange', () => {
     offset += dy * resist;
     offset = Math.max(-160, Math.min(160, offset));
     inner.style.transition = 'none';
-    inner.style.transform = 'translateY(' + offset.toFixed(1) + 'px)';
+    moveRows(offset);
     if (e.cancelable) e.preventDefault();
   }, { passive: false });
 
