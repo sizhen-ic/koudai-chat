@@ -250,6 +250,35 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 }
 #toast.show{opacity:1;transform:translate(-50%,0)}
 
+/* ===== 应用内对话框（替代浏览器原生 prompt/confirm） ===== */
+#modalwrap{position:fixed;inset:0;z-index:95;display:none}
+#modalwrap.show{display:block}
+#modalScrim{position:absolute;inset:0;background:#0009;opacity:0;transition:opacity .18s;backdrop-filter:blur(2px)}
+#modalwrap.show #modalScrim{opacity:1}
+#modal{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);
+  width:min(88vw,380px);background:var(--bg2);border:1px solid var(--line);
+  border-radius:18px;padding:20px 18px 14px;opacity:0;
+  transition:opacity .18s,transform .18s;box-shadow:0 18px 50px #0007;
+}
+#modalwrap.show #modal{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.mtitle{font-size:16px;font-weight:600;margin-bottom:8px}
+.mmsg{font-size:13.5px;color:var(--fg2);line-height:1.65;margin-bottom:12px}
+.mmsg:empty{display:none}
+.mtext{
+  width:100%;padding:11px 13px;border-radius:11px;border:1px solid var(--line);
+  background:var(--bg);color:var(--fg);font:inherit;font-size:15px;outline:none;margin-bottom:14px;
+}
+.mtext:focus{border-color:var(--accent)}
+.macts{display:flex;gap:10px;justify-content:flex-end}
+.macts button{
+  padding:10px 18px;border-radius:10px;border:1px solid var(--line);
+  background:transparent;color:var(--fg);font-size:14.5px;cursor:pointer;
+}
+.macts button:active{background:var(--bg3)}
+.macts button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.macts button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+
 /* ===== 对齐官方 App 的排版（后置覆盖） ===== */
 body{font-size:17px;line-height:1.78}
 .hinfo b{font-size:16.5px;font-weight:600}
@@ -440,6 +469,19 @@ body{font-size:17px;line-height:1.78}
 
 <div id="toast"></div>
 
+<div id="modalwrap">
+  <div id="modalScrim"></div>
+  <div id="modal">
+    <div class="mtitle" id="modalTitle"></div>
+    <div class="mmsg" id="modalMsg"></div>
+    <input id="modalInput" class="mtext" type="text" autocomplete="off" style="display:none">
+    <div class="macts">
+      <button id="modalCancel">取消</button>
+      <button id="modalOk" class="primary">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /*__APP_JS_START__*/
 (function () {
@@ -459,6 +501,61 @@ function toast(msg, ms) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.remove('show'), ms || 1900);
 }
+
+/* ---------- 应用内弹窗（不用浏览器原生 prompt/confirm） ---------- */
+let _modalDone = null;
+
+function closeModal(result) {
+  const w = $('#modalwrap');
+  if (!w || !w.classList.contains('show')) return;
+  w.classList.remove('show');
+  const done = _modalDone;
+  _modalDone = null;
+  if (done) done(result);
+}
+
+function openModal(opts) {
+  return new Promise((resolve) => {
+    _modalDone = resolve;
+    $('#modalTitle').textContent = opts.title || '';
+    $('#modalMsg').textContent = opts.message || '';
+    const inp = $('#modalInput');
+    if (opts.input) {
+      inp.value = opts.value || '';
+      inp.style.display = '';
+    } else {
+      inp.value = '';
+      inp.style.display = 'none';
+    }
+    const ok = $('#modalOk');
+    ok.textContent = opts.okText || '确定';
+    ok.className = opts.danger ? 'danger' : 'primary';
+    $('#modalCancel').textContent = opts.cancelText || '取消';
+    $('#modalwrap').classList.add('show');
+    if (opts.input) setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) {} }, 120);
+  });
+}
+
+/** 确认框 → true / false */
+function askConfirm(title, message, okText) {
+  return openModal({ title, message, okText, danger: true }).then((r) => r === true);
+}
+
+/** 输入框 → 字符串 / null（取消） */
+function askText(title, value, okText) {
+  return openModal({ title, input: true, value, okText: okText || '保存' }).then((r) => (typeof r === 'string' ? r : null));
+}
+
+$('#modalOk').addEventListener('click', () => {
+  const inp = $('#modalInput');
+  const withInput = inp.style.display !== 'none';
+  closeModal(withInput ? inp.value : true);
+});
+$('#modalCancel').addEventListener('click', () => closeModal(false));
+$('#modalScrim').addEventListener('click', () => closeModal(false));
+$('#modalInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); $('#modalOk').click(); }
+});
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1012,7 +1109,7 @@ function convMenu(c) {
 }
 
 async function renameConv(c) {
-  const name = prompt('新的标题', c.title || '');
+  const name = await askText('重命名对话', c.title || '', '保存');
   if (name == null) return;
   c.title = name.trim() || c.title;
   await saveConv(c);
@@ -1022,7 +1119,8 @@ async function renameConv(c) {
 
 async function delConv(c) {
   if (S.convs.length <= 1) { toast('至少留一个会话'); return; }
-  if (!confirm('删除「' + (c.title || '新的对话') + '」？不可恢复。')) return;
+  const sure = await askConfirm('删除对话', '「' + (c.title || '新的对话') + '」删除后不可恢复。', '删除');
+  if (!sure) return;
   await idbDel('convs', c.id);
   S.convs = S.convs.filter((x) => x.id !== c.id);
   if (S.current.id === c.id) {
@@ -1651,8 +1749,9 @@ function msgMenu(index) {
     items.push({
       label: '编辑并重发',
       sub: '这条及之后的对话会被替换',
-      onPick: () => {
-        if (!confirm('编辑这条消息？它之后的内容会被删除。')) return;
+      onPick: async () => {
+        const sure = await askConfirm('编辑这条消息', '它之后的内容会被删除。', '继续');
+        if (!sure) return;
         const txt = m.content;
         c.messages.splice(index);
         saveConv(c).then(() => {
@@ -1675,7 +1774,8 @@ function msgMenu(index) {
   items.push({
     label: '删除这条', danger: true,
     onPick: async () => {
-      if (!confirm('删除这条消息？')) return;
+      const sure = await askConfirm('删除这条消息', '删除后不可恢复。', '删除');
+      if (!sure) return;
       c.messages.splice(index, 1);
       await saveConv(c);
       renderMessages(); updateChrome(); renderConvList();
@@ -1756,7 +1856,8 @@ async function importFile(file) {
     const data = JSON.parse(await file.text());
     const convs = Array.isArray(data.convs) ? data.convs : [];
     if (!convs.length) { toast('文件里没有对话'); return; }
-    if (!confirm('导入 ' + convs.length + ' 个会话？会追加到现有列表。')) return;
+    const sureImport = await askConfirm('导入对话', '导入 ' + convs.length + ' 个会话？会追加到现有列表。', '导入');
+    if (!sureImport) return;
     for (const c of convs) {
       c.id = c.id && !S.convs.some((x) => x.id === c.id) ? c.id : uid();
       await idbPut('convs', c);
@@ -1867,7 +1968,8 @@ $('#fileImport').addEventListener('change', (e) => {
   e.target.value = '';
 });
 $('#btnClearAll').addEventListener('click', async () => {
-  if (!confirm('清空全部会话和设置？不可恢复。')) return;
+  const sureClear = await askConfirm('清空所有数据', '全部会话和设置都会被删除，不可恢复。', '清空');
+  if (!sureClear) return;
   for (const c of S.convs) await idbDel('convs', c.id);
   await idbDel('meta', 'settings');
   await idbDel('meta', 'currentId');
