@@ -3,15 +3,17 @@ plugins {
 }
 
 // 固定签名：密钥一旦确定，之后所有构建都相同 → 可以直接覆盖安装。
-// 口令优先读环境变量；读不到才回退到历史值（该值已在公开仓库历史中，视为已泄露）。
+// 口令优先读环境变量，读不到才回退到历史值（该值已在公开仓库历史里，视为已泄露）。
 def keystoreFile = file('koudai.jks')
 def hasKeystore = keystoreFile.exists()
-def envStorePass = System.getenv('KOUDAL_STORE_PASS')
-def storePass = (envStorePass && envStorePass.trim().length() > 0) ? envStorePass : 'koudai123456'
-def keyAlias = System.getenv('KOUDAL_KEY_ALIAS') ?: 'koudai'
-def keyPass = System.getenv('KOUDAL_KEY_PASS') ?: storePass
-def vCode = (System.getenv('KOUDAL_VERSION_CODE') ?: '1') as Integer
-def vName = System.getenv('KOUDAL_VERSION_NAME') ?: '1.0'
+def ksPass = System.getenv('KOUDAL_STORE_PASS') ?: 'koudai123456'
+
+def vCode = 1
+def vName = '1.0'
+def envCode = System.getenv('KOUDAL_VERSION_CODE')
+if (envCode != null && envCode.isInteger()) { vCode = envCode.toInteger() }
+def envName = System.getenv('KOUDAL_VERSION_NAME')
+if (envName != null && envName.length() > 0) { vName = envName }
 
 android {
     namespace 'ai.koudai.chat'
@@ -29,9 +31,9 @@ android {
         koudai {
             if (hasKeystore) {
                 storeFile keystoreFile
-                storePassword storePass
-                keyAlias keyAlias
-                keyPassword keyPass
+                storePassword ksPass
+                keyAlias 'koudai'
+                keyPassword ksPass
             }
         }
     }
