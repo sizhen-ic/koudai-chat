@@ -1,157 +1,133 @@
-# 口袋对话 v4
+# 蓝色大肥鱼
 
-桌面上一个图标，点开就是对话界面，**数据全部在手机本地**。
+一个**只在自己手机上**跑的 AI 对话 App：界面像官方 DeepSeek，但用的是**你自己的 API Key**，没有每日限量，数据全部存在本地。
 
-三种形态，同一个 `index.html`，启动时自动选择数据存放位置：
+装好之后桌面一个图标，点开就是对话界面。
 
-| 形态 | 怎么用 | 数据在哪 |
+---
+
+## 三种形态，同一份代码
+
+| 形态 | 怎么用 | 数据存哪 |
 |---|---|---|
-| **APK（原生外壳）** ⭐ | 装到手机，桌面图标点开 | App 私有目录 `files/data/state.json` |
-| **本地服务** | Termux 里 `node server.mjs`，浏览器打开 | 手机上的 `data/state.json` |
-| 静态网页 | 托管或直接开文件 | 浏览器存储（会丢，仅试用） |
+| **APK（推荐）** | 装到手机，桌面点图标 | App 私有目录 `files/data/state.json` |
+| 本地服务 | Termux 里 `node server.mjs` | 手机上的 `data/state.json` |
+| 静态网页 | 托管或直接开文件 | 浏览器存储（可能被系统清掉） |
+
+页面启动时自动探测用哪种，不用手动选。
 
 ---
 
-## 数据优先级（代码里的顺序）
+## 功能清单
+
+### 对话
+
+- 流式输出，逐字显示（约 20 字/秒，可读不跳）
+- **深度思考**：可开关，思考过程折叠展示，结束后自动收起并显示"已思考（用时 N 秒）"
+- **联网搜索**：走模型自带的 `deepseek_web_search` 工具
+- 模型切换：`deepseek-flash`（1M 上下文、支持图片）/ `deepseek-v4-pro`
+- 停止生成、重新生成、复制、删除单条消息
+- 消息操作、长按选择、代码块一键复制
+- **数学公式**：内置 KaTeX，行内 `$...$` 与块级 `$$...$$` 都渲染
+- Markdown：标题、列表、嵌套列表、表格、引用、代码块、链接
+- 打字机效果 + 自动滚动跟随（手指一碰就让出控制权，不跟手势抢）
+- 余额显示：调用 `/user/balance`，显示剩余金额
+
+### 长上下文与记忆
+
+- 对话累计到阈值（默认 **20 万字**，可改），自动触发记忆压缩
+- 压缩时按**权重**挑选重点：
+  - 位置越靠后权重越高
+  - 用户说的话比 AI 说的权重高
+  - 时间越近权重越高（7 天半衰）
+  - 含数字、"决定/以后/不要/记住"等信号词加权
+- 高权重片段会单独交给摘要器，要求优先保留：身份处境、偏好忌讳、已定决策、未完成事项、关键事实
+- **不覆盖原文**：压缩后自动生成新会话「原名字 副本」，原对话一条不删
+- 副本带着记忆摘要 + 最近一段原文，接话是连续的
+
+### 文件
+
+- 图片：拍照 / 相册，走 Files API 上传，对话里用 `file_id` 引用
+- 任意文件：选文件 → 上传 → 提问（PDF、txt、docx 等）
+- 附件在气泡里显示文件名与大小，可点开查看
+
+### 界面
+
+- 深色 + 淡蓝玻璃质感（`backdrop-filter` 毛玻璃）
+- 动态背景：整张壁纸缓慢推近循环，底部空档藏在输入区玻璃下
+- 弹性滚动：只位移消息层，顶栏和输入区纹丝不动
+- **手势**：对话页右滑 → 会话列表；列表内左滑 → 返回
+- **返回键**：先关弹层 → 再关列表 → 才退出 App
+- 会话列表：搜索、重命名、删除、按今天/昨天/最近 7 天/更早分组
+- 全部图标为线性 SVG，随主题变色
+
+### 数据
+
+- 全部本地：会话、设置、附件元数据
+- 三种存储后端自动降级：原生桥 → HTTP 服务 → IndexedDB → localStorage
+- 原子写入 + 滑动备份（保留最近若干份 `state.json`）
+- 设置项：API 地址、Key、模型、系统提示、温度、压缩阈值等
+
+### 导出
+
+- **单个对话导出为 Markdown**：`用户 / AI / 深度思考` 三种内容分块标记，深度思考用引用块包起来
+- 文件名形如 `对话标题-2026-11-18-22-40.md`，存到手机「下载」目录
+- 全量备份为 JSON（自动剔除 API Key）
+
+---
+
+## 安全
+
+见 [SECURITY.md](SECURITY.md)。要点：
+
+- 数据不上传任何第三方，API Key 只存在本机；
+- 仓库里**曾**包含签名密钥（已公开），Release 现在附带 APK 的 SHA-256 供校验；
+- 彻底解决需要轮换签名密钥，步骤写在 SECURITY.md 里。
+
+---
+
+## 目录结构
 
 ```
-启动
- ├─ 有 window.KoudaiNative ？ → 原生模式：读写 App 私有目录里的 state.json
- ├─ 有 /api/state ？        → 服务模式：读写手机上的真实文件
- └─ 都没有                  → 浏览器 IndexedDB / localStorage
+index.html                整个 App（HTML + CSS + JS 单文件）
+server.mjs                零依赖本地服务器（静态 + /api/state + 备份）
+sw.js                     Service Worker
+katex/                    KaTeX 本地副本（公式渲染）
+android/                  WebView 外壳（Java）
+  app/src/main/java/ai/koudai/chat/
+    MainActivity.java     窗口、返回键、文件选择
+    StoreBridge.java      状态读写 + 导出落盘
+.github/workflows/        CI：编译 APK 并发 Release
+dev/                      测试与工具脚本
 ```
 
-设置页里会实时显示当前用的是哪种。**只要不是第三种，清浏览器缓存都不会丢数据。**
-
 ---
 
-## 路线 A：装 APK
-
-### 为什么不能直接给你安装包
-
-这个工作环境里没有 Java、没有 Gradle、没有 Android SDK，**编译不了 APK**。所以我把整个工程写好，用 GitHub Actions 在云端编译。
-
-### 步骤
-
-1. 注册/登录 GitHub，新建一个**空仓库**（Private 也行）
-2. 把 `phone-chat` 文件夹里的**所有内容**传上去（网页文件 + `android/` + `.github/`）
-   - 网页上传：仓库页 → Add file → Upload files → 拖进去
-   - 注意 `.github/workflows/build-apk.yml` 必须在仓库根目录的 `.github/workflows/` 下
-3. 进仓库的 **Actions** 标签页，会看到 `build-apk` 正在跑（约 3–6 分钟）
-4. 跑完点进去，底部 **Artifacts** 下载 `koudai-apk.zip`，解压得到 `app-debug.apk`
-5. 传到手机上安装（需要允许未知来源）
-
-### 这个 APK 做了什么
-
-- 一个全屏 WebView，加载打包在里面的对话界面，**没有地址栏**
-- 界面通过 `KoudaiNative` 桥把数据写进 **App 私有目录**，完全不碰浏览器存储
-- 每次保存：临时文件 + rename（原子写），另有每 10 分钟一次的快照，保留最近 30 份
-- 清理浏览器缓存、换浏览器、换 WiFi 都不影响；**卸载 App 才会删**
-
-### ⚠️ 先说清楚风险
-
-我**没能在这里编译验证**它一定能通过。第一次跑 CI 有可能报错（Gradle 版本、SDK 组件之类）。
-
-如果失败了：把 Actions 里的报错日志贴给我，我按报错改。这类问题一般一两轮就能修好。
-
----
-
-## 路线 B：本地服务 + 网盘备份（不用 GitHub）
+## 本地开发
 
 ```bash
-pkg install -y nodejs
-cd ~/phone-chat
-PORT=8080 node server.mjs
-```
+# 网页直接打开
+start index.html
 
-浏览器打开 `http://127.0.0.1:8080/`，加到主屏幕。
+# 或用本地服务（数据写在磁盘）
+node server.mjs            # 默认 8788 端口
 
-想要更强的容灾，加一个外部副本目录：
-
-```bash
-termux-setup-storage
-KOUDAI_SD=/sdcard/Documents/koudai PORT=8080 node server.mjs
-```
-
-服务会往那里写 `koudai-latest.json` 和按天的副本，**再把网盘 App 的备份指向这个文件夹**，数据就上云了。
-
-开机自启：
-
-```bash
-mkdir -p ~/.termux/boot
-cat > ~/.termux/boot/start-chat <<'EOF'
-#!/data/data/com.termux/files/usr/bin/sh
-termux-wake-lock
-cd $HOME/phone-chat
-KOUDAI_SD=/sdcard/Documents/koudai PORT=8080 node server.mjs >> $HOME/chat.log 2>&1
-EOF
-chmod +x ~/.termux/boot/start-chat
+# 跑测试
+node dev/test.js           # 逻辑 39 项
+node dev/test-math.js      # 公式 10 项
+node dev/test-attach.js    # 附件 21 项
+node dev/test-http.js      # 接口 6 项
+node dev/test-native.js    # 原生桥 9 项
 ```
 
 ---
 
-## 首次配置
+## 构建 APK
 
-打开应用 → 右上角 ⚙：
-
-1. **API 地址**：`https://api.deepseek.com`
-2. **API Key**：<https://platform.deepseek.com/> → API keys
-3. **模型**：`deepseek-flash`
-4. 点「测试连接」
-
-价格（deepseek-flash，空闲时段）：输入 1 元/百万 token，输出 4 元/百万。日常几十轮通常一两块钱。
-
----
-
-## 功能
-
-- 多会话：分组、搜索、重命名、删除
-- 消息：复制 / 编辑重发 / 重新生成 / 删除
-- 模型切换、深度思考折叠展示
-- 长上下文：滚动摘要，原文永久保留
-- Markdown：标题、列表、表格、代码块复制、链接
-- 三种存储模式自动切换
-- 一键备份（服务模式下快照 + 下载；原生模式下自动快照）
-
-## 还没做
-
-- 发图片 / 传文件（Files API）
-- 联网搜索 / 深度思考开关
-- 语音输入
-
----
-
-## 开发与测试
-
-```bash
-node --check server.mjs
-node dev/test.js          # 33 项：浏览器模式逻辑
-node dev/test-http.js     # 6 项：本地服务模式
-node dev/test-native.js   # 9 项：APK 原生桥模式
-node dev/check-ids.js     # DOM id 一致性
-python dev/make-icons.py          # 网页图标
-python dev/make-android-icons.py  # APK 启动图标
-```
-
-服务端接口（只监听 127.0.0.1）：
+推到 `main` 分支即触发 GitHub Actions，自动编译并发 Release：
 
 ```
-GET    /api/health
-GET    /api/state
-PUT    /api/state      原子写入 + 自动快照
-GET    /api/backup     下载 JSON
-POST   /api/backup     立即快照 + 复制到外部目录
+v1.0.<构建号>  →  蓝色大肥鱼 v1.0.<构建号>
 ```
 
-## 目录
-
-```
-index.html              应用本体
-server.mjs              本地服务（可选）
-manifest.webmanifest    PWA 清单
-sw.js                   离线外壳
-icons                   web / android 两套
-android/                Android 工程（WebView 外壳 + 数据桥）
-.github/workflows/      云端编译 APK
-dev/                    测试与工具脚本
-```
+需要仓库里存在签名密钥（`android/app/koudai.jks`）或配置 `KEYSTORE_BASE64` Secret，否则构建会中止——避免产出一个装不上去的 APK。
