@@ -2232,33 +2232,69 @@ document.addEventListener('visibilitychange', () => {
   const inner = $('#msginner');
   if (!box || !inner || !box.addEventListener) return;
 
-  const LIMIT = 14;          // 一次最多拉开多少个「块」
-  let targets = [];          // 段落级目标：消息条 + 里面的段落/列表/代码块
+  const LIMIT = 10;          // 一次最多拉开多少个「块」
+  let targets = [];          // 叶子块：段落 / 列表 / 代码块 / 用户气泡
   let touched = [];
   let lastY = 0;
   let offset = 0;
   let dragging = false;
   let active = false;
   let raf = 0;
+  let metrics = { sh: 0, ch: 0 };
+  let paintQueued = false;
 
+  // 缓存滚动尺寸，避免每次 touchmove 触发强制重排（这是卡顿主因）
+  function refreshMetrics() {
+    metrics.sh = box.scrollHeight;
+    metrics.ch = box.clientHeight;
+  }
   const atTop = () => box.scrollTop <= 0;
-  const atBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight <= 1;
+  const atBottom = () => metrics.sh - box.scrollTop - metrics.ch <= 1;
+
+  // 一帧最多画一次
+  function queuePaint() {
+    if (paintQueued || raf) return;
+    paintQueued = true;
+    requestAnimationFrame(() => {
+      paintQueued = false;
+      if (!active) return;
+      paint(offset);
+    });
+  }
 
   function collect() {
     targets = [];
-    // 只取「叶子块」：段落、列表、代码块……避免和整条消息嵌套叠加
+    // 用户消息：动整个气泡（只动文字会跑出气泡、压到别处）
+    // 助手消息：动每个段落/列表/代码块，这样才能看出段落被拉开
     const turns = inner.querySelectorAll ? inner.querySelectorAll('.turn') : [];
     for (let i = 0; i < turns.length; i++) {
-      const kids = turns[i].querySelectorAll ? turns[i].querySelectorAll('.bubble > *') : [];
-      if (kids.length) {
+      const t = turns[i];
+      const bubble = t.querySelector ? t.querySelector('.bubble') : null;
+      const isUser = t.classList && t.classList.contains('user');
+      if (isUser) {
+        targets.push({ el: bubble || t, k: 1 });
+        continue;
+      }
+      const kids = bubble && bubble.children ? bubble.children : null;
+      if (kids && kids.length) {
         for (let j = 0; j < kids.length; j++) targets.push({ el: kids[j], k: 1 });
       } else {
-        targets.push({ el: turns[i], k: 1 });
+        targets.push({ el: bubble || t, k: 1 });
       }
     }
     if (!targets.length) {
       const em = inner.querySelectorAll ? inner.querySelectorAll('.empty') : [];
       for (let j = 0; j < em.length; j++) targets.push({ el: em[j], k: 1 });
+    }
+    // 临时提升为合成层，让位移在 GPU 上完成
+    const lift = Math.min(targets.length, LIMIT);
+    for (let k = 0; k < lift; k++) {
+      if (targets[k].el && targets[k].el.style) targets[k].el.style.willChange = 'transform';
+    }
+    const liftEnd = Math.min(targets.length, LIMIT);
+    for (let k = 0; k < liftEnd; k++) {
+      const el = targets[targets.length - 1 - k].el;
+      if (el && el.style) el.style.willChange = 'transform';
     }
   }
 
@@ -2280,7 +2316,8 @@ document.addEventListener('visibilitychange', () => {
       if (!item || !item.el || !item.el.style) continue;
       // 指数 < 1：靠近拉动端衰减更快，那里的间距被拉得更大
       const w = Math.pow((limit - 1 - k) / Math.max(1, limit - 1), 0.55) * item.k;
-      item.el.style.transform = 'translateY(' + (off * w).toFixed(1) + 'px)';
+      // translate3d 走 GPU 合成，避免每帧重排
+      item.el.style.transform = 'translate3d(0,' + (off * w).toFixed(1) + 'px,0)';
       touched.push(item.el);
     }
   }
@@ -2296,9 +2333,16 @@ document.addEventListener('visibilitychange', () => {
     }
     if (animate) {
       setTimeout(() => {
-        for (let i = 0; i < list.length; i++) { if (list[i].style) list[i].style.transition = ''; }
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].style) { list[i].style.transition = ''; list[i].style.willChange = ''; }
+        }
       }, 460);
+    } else {
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].style) list[i].style.willChange = '';
+      }
     }
+    refreshMetrics();
   }
 
   /** 滑到尽头时的缓冲：阻尼正弦，向外冲一下再收回来 */
@@ -2327,6 +2371,7 @@ document.addEventListener('visibilitychange', () => {
 
   box.addEventListener('touchstart', (e) => {
     if (!e.touches || e.touches.length !== 1) return;
+    refreshMetrics();
     collect();
     lastY = e.touches[0].clientY;
     dragging = true;
@@ -2347,7 +2392,7 @@ document.addEventListener('visibilitychange', () => {
     const resist = 0.85 * (1 - Math.min(Math.abs(offset), 260) / 900);
     offset += dy * resist;
     offset = Math.max(-260, Math.min(260, offset));
-    paint(offset);
+    queuePaint();
     if (e.cancelable) e.preventDefault();
   }, { passive: false });
 
@@ -2357,6 +2402,7 @@ document.addEventListener('visibilitychange', () => {
   /* 快速滑到尽头：补一个缓冲动画，避免硬停 */
   const samples = [];
   let lastBump = 0;
+  let lastMetricAt = 0;
 
   function velocity() {
     if (samples.length < 2) return 0;
@@ -2370,6 +2416,9 @@ document.addEventListener('visibilitychange', () => {
     const now = Date.now();
     samples.push([now, box.scrollTop]);
     while (samples.length > 2 && now - samples[0][0] > 140) samples.shift();
+
+    // 尺寸最多每 300ms 读一次，避免滚动时反复强制重排
+    if (now - lastMetricAt > 300) { lastMetricAt = now; refreshMetrics(); }
 
     if (active || dragging) return;
     if (now - lastBump < 900) return;
