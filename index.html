@@ -2361,11 +2361,12 @@ msgEl().addEventListener('touchstart', () => { scrollPinned = false; }, { passiv
     el.addEventListener('touchcancel', finish, { passive: true });
   }
 
+  // 右滑 → 打开会话列表；左滑 → 收起
   attach(box, (dx) => {
-    if (dx < 0 && typeof openDrawer === 'function') openDrawer();
+    if (dx > 0 && typeof openDrawer === 'function') openDrawer();
   });
   attach(drawer, (dx) => {
-    if (dx > 0 && typeof closeDrawer === 'function') closeDrawer();
+    if (dx < 0 && typeof closeDrawer === 'function') closeDrawer();
   });
 })();
 
