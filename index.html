@@ -299,8 +299,12 @@ details.think summary{
 }
 details.think summary::-webkit-details-marker{display:none}
 details.think summary::before{content:none}
-details.think summary .chev{font-size:15px;line-height:1;color:var(--fg3);transition:transform .2s;transform:rotate(0deg)}
-details.think[open] summary .chev{transform:rotate(180deg)}
+details.think summary .chev{
+  width:16px;height:16px;flex:0 0 auto;fill:none;stroke:currentColor;
+  stroke-width:2;stroke-linecap:round;stroke-linejoin:round;
+  color:var(--fg3);transition:transform .2s;
+}
+details.think[open] summary .chev{transform:rotate(90deg)}
 .think-body{
   border-left:2px solid var(--line);padding-left:12px;margin-top:8px;
   line-height:1.75;color:var(--fg2);
@@ -317,6 +321,8 @@ details.think[open] summary .chev{transform:rotate(180deg)}
 .bubble p{margin:1em 0}
 .turn.assistant .bubble{background:none;border:0;padding:0;max-width:100%;border-radius:0}
 .turn.user .bubble{font-size:15.8px;border-radius:20px;border-bottom-right-radius:6px;padding:9px 15px;line-height:1.5}
+.turn.user .bubble p{margin:0}
+.turn.user .bubble .body{line-height:1.5}
 .bubble li{margin:.55em 0;line-height:1.85}
 .bubble li::marker{color:var(--fg2)}
 .bubble ul,.bubble ol{margin:.9em 0;padding-left:1.5em}
@@ -1026,7 +1032,8 @@ function makeTurn(m, index, total) {
     d.className = 'think';
     const secs = m.reasoningMs ? Math.max(1, Math.round(m.reasoningMs / 1000)) : 0;
     const label = secs ? '已思考（用时 ' + secs + ' 秒）' : '已思考';
-    d.innerHTML = '<summary><span class="ttl">' + label + '</span><span class="chev">▾</span></summary>' +
+    d.innerHTML = '<summary><span class="ttl">' + label + '</span>' +
+      '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></summary>' +
       '<div class="think-body">' + md(m.reasoning) + '</div>';
     bubble.appendChild(d);
   }
@@ -1718,7 +1725,9 @@ async function runCompletion() {
   const think = document.createElement('details');
   think.className = 'think';
   think.style.display = 'none';
-  think.innerHTML = '<summary><span class="ttl">思考中…</span><span class="chev">▾</span></summary><div class="think-body"></div>';
+  think.innerHTML = '<summary><span class="ttl">思考中…</span>' +
+    '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></summary>' +
+    '<div class="think-body"></div>';
   const thinkBody = think.querySelector('.think-body');
   const body = document.createElement('div');
   body.className = 'body';
@@ -2237,12 +2246,15 @@ document.addEventListener('visibilitychange', () => {
 
   function collect() {
     targets = [];
+    // 只取「叶子块」：段落、列表、代码块……避免和整条消息嵌套叠加
     const turns = inner.querySelectorAll ? inner.querySelectorAll('.turn') : [];
     for (let i = 0; i < turns.length; i++) {
-      const t = turns[i];
-      targets.push({ el: t, k: 1 });
-      const kids = t.querySelectorAll ? t.querySelectorAll('.bubble > *') : [];
-      for (let j = 0; j < kids.length; j++) targets.push({ el: kids[j], k: 0.55 });
+      const kids = turns[i].querySelectorAll ? turns[i].querySelectorAll('.bubble > *') : [];
+      if (kids.length) {
+        for (let j = 0; j < kids.length; j++) targets.push({ el: kids[j], k: 1 });
+      } else {
+        targets.push({ el: turns[i], k: 1 });
+      }
     }
     if (!targets.length) {
       const em = inner.querySelectorAll ? inner.querySelectorAll('.empty') : [];
@@ -2268,7 +2280,6 @@ document.addEventListener('visibilitychange', () => {
       if (!item || !item.el || !item.el.style) continue;
       // 指数 < 1：靠近拉动端衰减更快，那里的间距被拉得更大
       const w = Math.pow((limit - 1 - k) / Math.max(1, limit - 1), 0.55) * item.k;
-      item.el.style.transition = 'none';
       item.el.style.transform = 'translateY(' + (off * w).toFixed(1) + 'px)';
       touched.push(item.el);
     }
@@ -2295,11 +2306,11 @@ document.addEventListener('visibilitychange', () => {
     if (!targets.length) return;
     cancelAnimationFrame(raf);
     const t0 = Date.now();
-    const DUR = 340;
-    const AMP = 30;
+    const DUR = 380;
+    const AMP = 34;
     const step = () => {
       const k = Math.min(1, (Date.now() - t0) / DUR);
-      const v = Math.sin(k * Math.PI * 2.4) * Math.exp(-3.4 * k) * AMP * dir;
+      const v = Math.sin(k * Math.PI * 2.0) * Math.exp(-3.0 * k) * AMP * dir;
       paint(v);
       if (k < 1) raf = requestAnimationFrame(step);
       else clear(false);
@@ -2344,21 +2355,31 @@ document.addEventListener('visibilitychange', () => {
   box.addEventListener('touchcancel', () => { dragging = false; springBack(); }, { passive: true });
 
   /* 快速滑到尽头：补一个缓冲动画，避免硬停 */
-  let lastTop = 0;
-  let lastAt = 0;
+  const samples = [];
   let lastBump = 0;
+
+  function velocity() {
+    if (samples.length < 2) return 0;
+    const a = samples[0];
+    const b = samples[samples.length - 1];
+    const dt = b[0] - a[0];
+    return dt > 0 ? (b[1] - a[1]) / dt : 0;
+  }
+
   box.addEventListener('scroll', () => {
     const now = Date.now();
-    const top = box.scrollTop;
-    const dt = now - lastAt;
-    const v = dt > 0 ? (top - lastTop) / dt : 0;
-    lastTop = top;
-    lastAt = now;
-    if (active || dragging) return;
-    if (now - lastBump < 700) return;
+    samples.push([now, box.scrollTop]);
+    while (samples.length > 2 && now - samples[0][0] > 140) samples.shift();
 
-    if (atBottom() && v > 1.1) { lastBump = now; collect(); flingBump(-1); }
-    else if (atTop() && v < -1.1) { lastBump = now; collect(); flingBump(1); }
+    if (active || dragging) return;
+    if (now - lastBump < 900) return;
+
+    const v = velocity();
+    if (atBottom() && v > 0.9) {
+      lastBump = now; samples.length = 0; collect(); flingBump(-1);
+    } else if (atTop() && v < -0.9) {
+      lastBump = now; samples.length = 0; collect(); flingBump(1);
+    }
   }, { passive: true });
 })();
 
