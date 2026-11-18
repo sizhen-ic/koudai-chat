@@ -85,7 +85,7 @@ header{
 .bubble th,.bubble td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
 .bubble th{background:var(--bg3);font-weight:600}
 .bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.87em;background:var(--bg3);padding:1.5px 5px;border-radius:5px}
-.bubble .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0;margin:.6em 0}
+.bubble .katex-display{overflow-x:auto;overflow-y:hidden;padding:6px 0;margin:1.1em 0}
 .bubble .katex{font-size:1.02em}
 .bubble code.tex{white-space:pre-wrap;word-break:break-all;color:var(--danger)}
 .codebox{position:relative;margin:.7em 0}
@@ -280,20 +280,26 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .macts button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
 
 /* ===== 对齐官方 App 的排版（后置覆盖） ===== */
-body{font-size:17px;line-height:1.78;overscroll-behavior:auto}
+body{font-size:17px;line-height:1.9;font-weight:400;overscroll-behavior:auto;
+  -webkit-text-size-adjust:100%;text-size-adjust:100%}
 #messages{overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;scroll-behavior:auto}
 #msginner{min-height:100%;will-change:transform}
 .empty{min-height:60vh}
 .bubble{contain:layout style}
+.turn.assistant .actbar{display:flex;opacity:.5;transition:opacity .15s}
+.turn.assistant.sel .actbar{opacity:1}
+.actbar button svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;display:block}
+.actbar button{padding:5px 8px}
 .hinfo b{font-size:16.5px;font-weight:600}
 #messages{padding:16px 16px 10px}
 .turn{margin:0 0 26px}
-.bubble{line-height:1.8;font-size:17px}
-.bubble p{margin:.8em 0}
+.bubble{line-height:1.9;font-size:17px;font-weight:400}
+.bubble p{margin:1em 0}
 .turn.assistant .bubble{background:none;border:0;padding:0;max-width:100%;border-radius:0}
 .turn.user .bubble{font-size:16.5px;border-radius:20px;border-bottom-right-radius:6px;padding:10px 15px;line-height:1.65}
-.bubble li{margin:.35em 0}
-.bubble ul,.bubble ol{margin:.7em 0;padding-left:1.4em}
+.bubble li{margin:.55em 0;line-height:1.85}
+.bubble li::marker{color:var(--fg2)}
+.bubble ul,.bubble ol{margin:.9em 0;padding-left:1.5em}
 .bubble h1,.bubble h2,.bubble h3{margin:1.1em 0 .5em}
 .actbar{margin-top:6px;gap:4px}
 .actbar button{font-size:12px;padding:4px 9px;border-radius:8px;color:var(--fg3)}
@@ -996,12 +1002,18 @@ function makeTurn(m, index, total) {
   const bar = document.createElement('div');
   bar.className = 'actbar';
   const isLast = index === total - 1;
+  const ICON = {
+    copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15.5V6a2 2 0 0 1 2-2h9.5"/></svg>',
+    regen: '<svg viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6"/><path d="M20.5 4.5V11h-6.2"/></svg>',
+    del: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.5 7V5.2h5V7"/><path d="M6.5 7l.9 12.2h9.2L17.5 7"/></svg>',
+  };
   if (m.role === 'user') {
     bar.innerHTML = '<button data-act="copy">复制</button><button data-act="edit">编辑</button><button data-act="del">删除</button>';
   } else {
-    bar.innerHTML = '<button data-act="copy">复制</button>' +
-      (isLast ? '<button data-act="regen">重新生成</button>' : '') +
-      '<button data-act="del">删除</button>';
+    bar.innerHTML =
+      '<button data-act="copy" aria-label="复制">' + ICON.copy + '</button>' +
+      (isLast ? '<button data-act="regen" aria-label="重新生成">' + ICON.regen + '</button>' : '') +
+      '<button data-act="del" aria-label="删除">' + ICON.del + '</button>';
   }
   row.appendChild(bar);
   return row;
@@ -1663,21 +1675,30 @@ async function runCompletion() {
   let reasoning = '';
   let failed = null;
 
-  // 节流渲染：每来一小段就整段重排会卡，也让人眼花；限制到约 11 帧/秒
-  let renderTimer = 0;
-  let lastRenderAt = 0;
-  let pendingRender = false;
-  const paintNow = () => {
-    pendingRender = false;
-    lastRenderAt = Date.now();
-    body.innerHTML = md(full) + '<span class="cursor"></span>';
+  // 打字机：文字逐字浮现（官方那种节奏）；积压多时自动加速，长回答也不会拖太久
+  let shownLen = 0;
+  let revealTimer = 0;
+  let revealing = false;
+
+  const paint = () => {
+    body.innerHTML = md(full.slice(0, shownLen)) + '<span class="cursor"></span>';
     scrollBottom(false);
   };
-  const paintSoon = () => {
-    if (pendingRender) return;
-    pendingRender = true;
-    const wait = Math.max(0, 90 - (Date.now() - lastRenderAt));
-    renderTimer = setTimeout(paintNow, wait);
+
+  const revealStep = () => {
+    if (shownLen >= full.length) { revealing = false; return; }
+    const lag = full.length - shownLen;
+    // 每帧至少 2 字；落后越多补得越快，保证总能追上
+    const step = Math.max(2, Math.ceil(lag / 12));
+    shownLen = Math.min(full.length, shownLen + step);
+    paint();
+    revealTimer = setTimeout(revealStep, full.length > 8000 ? 60 : 45);
+  };
+
+  const startReveal = () => {
+    if (revealing) return;
+    revealing = true;
+    revealStep();
   };
 
   try {
@@ -1686,7 +1707,7 @@ async function runCompletion() {
       ctrl.signal,
       (delta) => {
         full += delta;
-        paintSoon();
+        startReveal();
       },
       (r) => {
         reasoning += r;
@@ -1703,7 +1724,7 @@ async function runCompletion() {
 
   S.streaming = null;
   setStreaming(false);
-  clearTimeout(renderTimer);
+  clearTimeout(revealTimer);
 
   if (failed) {
     body.innerHTML = '<span style="color:var(--danger)">' + failed + '</span>';
