@@ -401,10 +401,10 @@ html,body{background:#08101f}
   filter:blur(38px) brightness(.62) saturate(1.15);
   animation:bgDrift 58s ease-in-out infinite alternate;
 }
-/* 上层：完整显示，不裁切 */
+/* 上层：完整显示，不裁切；贴顶对齐，底部空档正好藏在输入区玻璃下 */
 #bg .bgimg{
   position:absolute;inset:0;z-index:1;
-  background:url(bg.jpg) center/contain no-repeat;
+  background:url(bg.jpg) center top/contain no-repeat;
 }
 #bg .bgimg{z-index:1}
 @keyframes bgDrift{
