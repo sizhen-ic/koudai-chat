@@ -359,15 +359,16 @@ details.think[open] summary .chev{transform:rotate(90deg)}
 .balchip.low{color:#ff8f6b;border-color:#ff8f6b55}
 .balchip:active{background:var(--bg3)}
 
-/* ===== 原生整页滚动：滚动手势全部交给系统 ===== */
-html,body{height:auto;min-height:100%}
-body{overflow-y:auto;overscroll-behavior:auto}
-#app{display:block;height:auto;min-height:100vh}
-header{position:fixed;top:0;left:0;right:0;z-index:30}
-#messages{overflow:visible;padding-top:calc(var(--hdr, 68px) + 6px);padding-bottom:calc(var(--ftr, 150px) + 10px)}
-#msginner{min-height:0;will-change:auto}
-#composer{position:fixed;left:0;right:0;bottom:0;z-index:30}
-#gobottom{position:fixed;right:14px;bottom:calc(var(--ftr, 150px) + 12px);z-index:25}
+/* ===== 内层滚动：页头与输入区不动，只有消息内容能有弹性 ===== */
+html,body{height:100%;overflow:hidden}
+body{overscroll-behavior:none}
+#app{display:flex;flex-direction:column;height:100vh}
+@supports (height:100dvh){#app{height:100dvh}}
+header{position:sticky;top:0}
+#messages{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+#msginner{will-change:transform}
+#composer{flex:0 0 auto;position:relative;background:var(--bg);box-shadow:0 -10px 28px rgba(0,0,0,.45)}
+#gobottom{position:absolute;right:14px;bottom:12px;z-index:25}
 .footnote{text-align:center;font-size:10.5px;color:var(--fg3);padding-top:2px;opacity:.75}
 </style>
 </head>
@@ -1136,7 +1137,7 @@ function renderMessages() {
 /** 是否贴着底部（留一点容差，手指没那么准） */
 let scrollPinned = true;
 
-const scroller = () => document.scrollingElement || document.documentElement || document.body;
+const scroller = () => msgEl();
 
 function isAtBottom() {
   const s = scroller();
@@ -2183,13 +2184,16 @@ $('#fTemp').addEventListener('input', (e) => { $('#tempVal').textContent = Numbe
 $('#search').addEventListener('input', (e) => { S.search = e.target.value || ''; renderConvList(); });
 
 $('#gobottom').addEventListener('click', () => {
+  const box = msgEl();
   scrollPinned = true;
-  try { window.scrollTo({ top: scroller().scrollHeight, behavior: 'smooth' }); }
-  catch (e) { scroller().scrollTop = scroller().scrollHeight; }
+  try {
+    if (typeof box.scrollTo === 'function') box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    else box.scrollTop = box.scrollHeight;
+  } catch (e) { box.scrollTop = box.scrollHeight; }
   $('#gobottom').classList.remove('show');
 });
 
-window.addEventListener('scroll', () => {
+msgEl().addEventListener('scroll', () => {
   if (isAtBottom()) scrollPinned = true;
   $('#gobottom').classList.toggle('show', !isAtBottom());
 }, { passive: true });
@@ -2197,25 +2201,70 @@ window.addEventListener('scroll', () => {
 // 手指一碰就让出滚动控制权，生成中也能自由上下翻
 msgEl().addEventListener('touchstart', () => { scrollPinned = false; }, { passive: true });
 
-/* 页头与输入框是 fixed 的，用 CSS 变量把高度告诉消息区留白 */
-function syncPaneHeights() {
-  const root = document.documentElement;
-  if (!root || !root.style) return;
-  const h = document.querySelector ? document.querySelector('header') : null;
-  const f = $('#composer');
-  if (h && h.offsetHeight) root.style.setProperty('--hdr', h.offsetHeight + 'px');
-  if (f && f.offsetHeight) root.style.setProperty('--ftr', f.offsetHeight + 'px');
-}
+/* =========================================================
+   内容层弹性：只位移 #msginner 一个元素
+   页头、输入区完全不动；一次触摸只读一次布局，不卡
+   ========================================================= */
+(function initBounce() {
+  const box = msgEl();
+  const inner = $('#msginner');
+  if (!box || !inner || !box.addEventListener) return;
 
-if (typeof ResizeObserver === 'function') {
-  const ro = new ResizeObserver(syncPaneHeights);
-  const h = document.querySelector ? document.querySelector('header') : null;
-  const f = $('#composer');
-  if (h) ro.observe(h);
-  if (f) ro.observe(f);
-}
-window.addEventListener('resize', syncPaneHeights);
-syncPaneHeights();
+  let lastY = 0;
+  let offset = 0;
+  let dragging = false;
+  let bouncing = false;
+  let sh = 0;
+  let ch = 0;
+
+  const atTop = () => box.scrollTop <= 0;
+  const atBottom = () => sh - box.scrollTop - ch <= 1;
+
+  function measure() { sh = box.scrollHeight; ch = box.clientHeight; }
+
+  function paint(off) {
+    inner.style.transform = 'translate3d(0,' + off.toFixed(1) + 'px,0)';
+  }
+
+  function springBack() {
+    if (!offset) return;
+    offset = 0;
+    bouncing = true;
+    inner.style.transition = 'transform .38s cubic-bezier(.22,1.2,.36,1)';
+    inner.style.transform = '';
+    setTimeout(() => { inner.style.transition = ''; bouncing = false; }, 400);
+  }
+
+  box.addEventListener('touchstart', (e) => {
+    if (!e.touches || e.touches.length !== 1) return;
+    measure();
+    lastY = e.touches[0].clientY;
+    dragging = true;
+  }, { passive: true });
+
+  box.addEventListener('touchmove', (e) => {
+    if (!dragging || bouncing || !e.touches || e.touches.length !== 1) return;
+    const y = e.touches[0].clientY;
+    const dy = y - lastY;
+    lastY = y;
+
+    const pullDown = dy > 0 && atTop();
+    const pullUp = dy < 0 && atBottom();
+    if (!pullDown && !pullUp) {
+      if (offset) springBack();
+      return;
+    }
+
+    offset += dy * 0.55;
+    offset = Math.max(-140, Math.min(140, offset));
+    inner.style.transition = 'none';
+    paint(offset);
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  box.addEventListener('touchend', () => { dragging = false; springBack(); }, { passive: true });
+  box.addEventListener('touchcancel', () => { dragging = false; springBack(); }, { passive: true });
+})();
 
 msgEl().addEventListener('click', (e) => {
   const t = e.target;
