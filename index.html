@@ -394,20 +394,17 @@ header{position:sticky;top:0}
 }
 html,body{background:#08101f}
 #bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
-#bg .bgimg{
-  position:absolute;inset:-8%;z-index:1;
-  background:url(bg.jpg) center 32%/cover no-repeat;
-  animation:bgDrift 52s ease-in-out infinite alternate;
-  transform-origin:55% 35%;
-  filter:saturate(1.06) brightness(.86);
+/* 底层：同一张图放大模糊铺满，填掉两侧留白 */
+#bg .bgfill{
+  position:absolute;inset:-12%;z-index:0;
+  background:url(bg.jpg) center/cover no-repeat;
+  filter:blur(38px) brightness(.62) saturate(1.15);
+  animation:bgDrift 58s ease-in-out infinite alternate;
 }
-#bg .bgglow{
-  position:absolute;inset:0;z-index:3;
-  background:
-    radial-gradient(58% 42% at 72% 18%, rgba(130,195,255,.20), transparent 72%),
-    radial-gradient(52% 40% at 18% 82%, rgba(70,130,255,.16), transparent 72%),
-    linear-gradient(180deg, rgba(6,12,26,.50), rgba(6,12,26,.80));
-  animation:glowPulse 18s ease-in-out infinite alternate;
+/* 上层：完整显示，不裁切 */
+#bg .bgimg{
+  position:absolute;inset:0;z-index:1;
+  background:url(bg.jpg) center/contain no-repeat;
 }
 #bg .bgimg{z-index:1}
 @keyframes bgDrift{
@@ -484,8 +481,8 @@ header{
 </head>
 <body>
 <div id="bg" aria-hidden="true">
+  <div class="bgfill"></div>
   <div class="bgimg"></div>
-  <div class="bgglow"></div>
 </div>
 <div id="app">
   <header>
