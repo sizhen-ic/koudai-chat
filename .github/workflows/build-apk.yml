@@ -52,6 +52,28 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: 固定签名密钥（保证以后能覆盖安装）
+        working-directory: android
+        run: |
+          cd app
+          if [ ! -f koudai.jks ]; then
+            echo "第一次构建：生成固定签名密钥"
+            keytool -genkeypair -v -keystore koudai.jks -storetype PKCS12 -alias koudai \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass koudai123456 -keypass koudai123456 \
+              -dname "CN=Koudai App, OU=SelfUse, O=Personal, L=City, ST=State, C=CN"
+          else
+            echo "已存在固定密钥，直接复用"
+          fi
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/koudai.jks
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: 固定签名密钥（此后可覆盖安装）"
+            git push
+          fi
+
       - name: 把网页资源放进 assets
         working-directory: android
         run: |

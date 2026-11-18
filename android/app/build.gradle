@@ -2,6 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+// 固定签名：密钥一旦生成并提交，之后所有构建都相同 → 可以直接覆盖安装
+def keystoreFile = file('koudai.jks')
+def hasKeystore = keystoreFile.exists()
+
 android {
     namespace 'ai.koudai.chat'
     compileSdk 34
@@ -14,13 +18,24 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        koudai {
+            if (hasKeystore) {
+                storeFile keystoreFile
+                storePassword 'koudai123456'
+                keyAlias 'koudai'
+                keyPassword 'koudai123456'
+            }
+        }
+    }
+
     buildTypes {
         debug {
-            minifyEnabled false
+            if (hasKeystore) signingConfig signingConfigs.koudai
         }
         release {
+            if (hasKeystore) signingConfig signingConfigs.koudai
             minifyEnabled false
-            // 本地/自用构建用 debug 签名即可；要发布请自备 keystore
         }
     }
 
@@ -29,7 +44,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // 打包时把仓库根目录的网页资源收进 assets
     sourceSets {
         main {
             assets.srcDirs = ['src/main/assets']

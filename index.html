@@ -280,7 +280,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .macts button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
 
 /* ===== 对齐官方 App 的排版（后置覆盖） ===== */
-body{font-size:17px;line-height:1.78}
+body{font-size:17px;line-height:1.78;overscroll-behavior:auto}
+#messages{overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;scroll-behavior:auto}
+.bubble{contain:layout style}
 .hinfo b{font-size:16.5px;font-weight:600}
 #messages{padding:16px 16px 10px}
 .turn{margin:0 0 26px}
@@ -1032,11 +1034,23 @@ function renderMessages() {
   scrollBottom(true);
 }
 
+/** 是否贴着底部（留一点容差，手指没那么准） */
+let scrollPinned = true;
+
+function isAtBottom() {
+  const box = msgEl();
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+}
+
+/**
+ * force=true：强制回到底部并重新跟随
+ * 否则：只在用户没有主动上滑时才跟随，避免生成时跟手指抢滚动条
+ */
 function scrollBottom(force) {
   const box = msgEl();
-  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
-  if (force || near) box.scrollTop = box.scrollHeight;
-  $('#gobottom').classList.toggle('show', !(near || force));
+  if (force) scrollPinned = true;
+  if (force || scrollPinned) box.scrollTop = box.scrollHeight;
+  $('#gobottom').classList.toggle('show', !isAtBottom());
 }
 
 /* =========================================================
@@ -1638,14 +1652,30 @@ async function runCompletion() {
   let reasoning = '';
   let failed = null;
 
+  // 节流渲染：每来一小段就整段重排会卡，也让人眼花；限制到约 11 帧/秒
+  let renderTimer = 0;
+  let lastRenderAt = 0;
+  let pendingRender = false;
+  const paintNow = () => {
+    pendingRender = false;
+    lastRenderAt = Date.now();
+    body.innerHTML = md(full) + '<span class="cursor"></span>';
+    scrollBottom(false);
+  };
+  const paintSoon = () => {
+    if (pendingRender) return;
+    pendingRender = true;
+    const wait = Math.max(0, 90 - (Date.now() - lastRenderAt));
+    renderTimer = setTimeout(paintNow, wait);
+  };
+
   try {
     await chatStream(
       buildRequestMessages(conv),
       ctrl.signal,
       (delta) => {
         full += delta;
-        body.innerHTML = md(full) + '<span class="cursor"></span>';
-        scrollBottom(false);
+        paintSoon();
       },
       (r) => {
         reasoning += r;
@@ -1662,6 +1692,7 @@ async function runCompletion() {
 
   S.streaming = null;
   setStreaming(false);
+  clearTimeout(renderTimer);
 
   if (failed) {
     body.innerHTML = '<span style="color:var(--danger)">' + failed + '</span>';
@@ -1979,12 +2010,23 @@ $('#btnClearAll').addEventListener('click', async () => {
 $('#fTemp').addEventListener('input', (e) => { $('#tempVal').textContent = Number(e.target.value).toFixed(1); });
 $('#search').addEventListener('input', (e) => { S.search = e.target.value || ''; renderConvList(); });
 
-$('#gobottom').addEventListener('click', () => scrollBottom(true));
-msgEl().addEventListener('scroll', () => {
+$('#gobottom').addEventListener('click', () => {
   const box = msgEl();
-  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
-  $('#gobottom').classList.toggle('show', !near);
+  scrollPinned = true;
+  try {
+    if (typeof box.scrollTo === 'function') box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    else box.scrollTop = box.scrollHeight;
+  } catch (e) { box.scrollTop = box.scrollHeight; }
+  $('#gobottom').classList.remove('show');
+});
+
+msgEl().addEventListener('scroll', () => {
+  if (isAtBottom()) scrollPinned = true;
+  $('#gobottom').classList.toggle('show', !isAtBottom());
 }, { passive: true });
+
+// 手指一碰就让出滚动控制权，生成中也能自由上下翻
+msgEl().addEventListener('touchstart', () => { scrollPinned = false; }, { passive: true });
 
 msgEl().addEventListener('click', (e) => {
   const t = e.target;
