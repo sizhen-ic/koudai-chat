@@ -9,7 +9,7 @@ const END = '/*__APP_JS_END__*/';
 const i1 = HTML.indexOf(START);
 const i2 = HTML.indexOf(END);
 let src = HTML.slice(i1 + START.length, i2);
-src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { estTokens, md, usageOf, buildRequestMessages, compact, relGroup, S, DEFAULTS };})();');
+src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { estTokens, md, usageOf, buildRequestMessages, compact, relGroup, downloadFile, S, DEFAULTS };})();');
 
 /* ---------- 断言 ---------- */
 const results = [];
@@ -154,6 +154,16 @@ setTimeout(async () => {
   ok('副本只保留近期消息', !!copy && copy.messages.length > 0 && copy.messages.length < 81, copy && ('len=' + copy.messages.length));
   ok('原对话记录了分叉去向', c2.forkedTo === (copy && copy.id));
   ok('切点落在 user', !copy || !copy.messages.length || copy.messages[0].role === 'user');
+
+  /* 导出：App 内必须走原生保存（WebView 不处理 a.download） */
+  let saved = null;
+  ctx.window.KoudaiNative = {
+    saveFile(name, mime, text) { saved = { name, mime, text }; return '下载/' + name; },
+  };
+  const okDl = K.downloadFile('测试-2026.md', '# 内容', 'text/markdown');
+  ok('导出走原生保存', okDl === true && !!saved, saved ? saved.name : '没调用');
+  ok('导出文件名与内容正确', !!saved && saved.name === '测试-2026.md' && saved.text === '# 内容', saved && saved.mime);
+  delete ctx.window.KoudaiNative;
 
   console.log(results.join('\n'));
   const fails = results.filter((r) => r.startsWith('FAIL'));

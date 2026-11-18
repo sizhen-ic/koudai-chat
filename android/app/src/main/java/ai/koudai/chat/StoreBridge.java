@@ -1,6 +1,11 @@
 package ai.koudai.chat;
 
+import android.content.ContentValues;
 import android.content.Context;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.webkit.JavascriptInterface;
 
 import java.io.ByteArrayOutputStream;
@@ -8,6 +13,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
@@ -31,13 +37,54 @@ public class StoreBridge {
     private final File dir;
     private final File stateFile;
     private final File backupDir;
+    private final Context ctx;
     private long lastBackupAt = 0L;
 
     public StoreBridge(Context ctx) {
+        this.ctx = ctx;
         dir = new File(ctx.getFilesDir(), "data");
         if (!dir.exists()) dir.mkdirs();
         stateFile = new File(dir, "state.json");
         backupDir = new File(dir, "backups");
+    }
+
+    /**
+     * 把文本写到系统「下载」目录，返回给用户看的位置说明；失败返回空串。
+     * Android 10+ 走 MediaStore（不需要任何权限）；更老的系统写到公共下载目录。
+     */
+    @JavascriptInterface
+    public String saveFile(String name, String mime, String content) {
+        try {
+            byte[] data = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
+            String safe = (name == null || name.isEmpty()) ? "export.txt" : name;
+            String type = (mime == null || mime.isEmpty()) ? "text/plain" : mime;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues cv = new ContentValues();
+                cv.put(MediaStore.MediaColumns.DISPLAY_NAME, safe);
+                cv.put(MediaStore.MediaColumns.MIME_TYPE, type);
+                cv.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                Uri uri = ctx.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                if (uri == null) return "";
+                OutputStream os = ctx.getContentResolver().openOutputStream(uri);
+                if (os == null) return "";
+                os.write(data);
+                os.flush();
+                os.close();
+                return "下载/" + safe;
+            }
+
+            File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!downloads.exists()) downloads.mkdirs();
+            File out = new File(downloads, safe);
+            FileOutputStream fos = new FileOutputStream(out);
+            fos.write(data);
+            fos.flush();
+            fos.close();
+            return out.getAbsolutePath();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     /** 读出整份状态；没有就返回空字符串。 */

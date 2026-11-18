@@ -2251,12 +2251,8 @@ function exportAll() {
     settings: Object.assign({}, S.settings, { apiKey: '' }),
     convs: S.convs,
   };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'koudai-' + new Date().toISOString().slice(0, 10) + '.json';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  const blobText = JSON.stringify(data, null, 2);
+  downloadFile('koudai-' + new Date().toISOString().slice(0, 10) + '.json', blobText, 'application/json');
 }
 
 /* ---------- 导出单个对话（Markdown，角色分明） ---------- */
@@ -2268,12 +2264,24 @@ function stampOf(ts) {
 }
 
 function downloadFile(name, text, mime) {
+  // App 里走原生保存：WebView 不会处理 a.download
+  try {
+    if (window.KoudaiNative && typeof window.KoudaiNative.saveFile === 'function') {
+      const where = window.KoudaiNative.saveFile(name, mime || 'text/plain', text);
+      if (where) { toast('已保存到 ' + where, 3800); return true; }
+      toast('保存失败：写入下载目录被拒绝', 3400);
+      return false;
+    }
+  } catch (e) { /* 落到浏览器方式 */ }
+
   const blob = new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('已开始下载：' + name, 3200);
+  return true;
 }
 
 function exportConversation(c) {
@@ -2314,7 +2322,6 @@ function exportConversation(c) {
   const safe = String(c.title || '对话').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
   const tail = stampOf(nowTs()).replace(/[: ]/g, '-');
   downloadFile(safe + '-' + tail + '.md', L.join('\n'), 'text/markdown');
-  toast('已导出这个对话');
 }
 
 async function importFile(file) {
