@@ -1,8 +1,9 @@
 /* 验证 HTTP 存储模式：探测 → 读取 → 写入 → 触发 PUT */
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
-const HTML = fs.readFileSync('C:/Users/zhenge/Documents/deepseek-harness/default-workspace/phone-chat/index.html', 'utf8');
+const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const START = '/*__APP_JS_START__*/', END = '/*__APP_JS_END__*/';
 let src = HTML.slice(HTML.indexOf(START) + START.length, HTML.indexOf(END));
 src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { S, pushNow, saveSettings };})();');

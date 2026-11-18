@@ -1,95 +1,71 @@
 # 安全说明
 
-这个仓库是**公开**的，而它同时承担两件事：源码托管 + APK 分发。下面把实际存在的风险和已经做的加固讲清楚。
+## 现状（2026-11-18 已处理）
 
----
+签名密钥**已轮换**，新密钥不在仓库里：
 
-## 一、已暴露的东西：签名密钥
+| 位置 | 内容 |
+|---|---|
+| GitHub Secrets | `KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`（CI 构建时还原） |
+| 本机 | `_keys/koudai-signing/`（仓库外，需自行另存一份） |
 
-`android/app/koudai.jks` 连同口令 `koudai123456` **提交在公开仓库里**（口令同时写在 `build.gradle` 和 workflow 中）。
+新证书指纹（SHA-256）：
 
-**这意味着什么**
+```
+8E:E8:FE:11:14:62:DA:04:16:26:27:76:26:D8:0D:3D:04:9B:F1:B1:E7:C9:3C:6C:BE:45:DE:E6:98:93:0C:82
+```
 
-- 任何人拿到这个密钥，都能签出一个「签名和你的一模一样」的 APK；
-- Android 只认签名，不认来源 —— 只要签名相同，就能**直接覆盖安装**，不需要卸载；
-- 也就是说，有人可以伪造一个"升级包"，让你在已装好的 App 上覆盖安装一个带后门的版本。
+> 旧密钥 `db92106c…` 已作废。它历史上曾经公开过，所以**不再可信**。
 
-**影响边界（重要）**
+## 第一次升级必须卸载
 
-- 这**不会**泄露你的 API Key：Key 只存在手机本地（`/data/user/0/ai.koudai.chat/files/data/state.json`），仓库和历史里都没有；
-- 攻击者无法远程推送到你手机 —— 必须**你主动下载并点击安装**才会生效；
-- 威胁场景是"有人把这个仓库/Release 页面做成钓鱼链接让你装"。
+Android 只允许「同签名覆盖安装」。新旧密钥不同，所以：
 
-**当前缓解措施**
+```
+备份 → 卸载旧版 → 装新签名版 → 导入备份
+```
 
-- Release 说明里现在会附上 APK 的 **SHA-256**，下载后可核对：
-  ```
-  sha256sum app-debug.apk
-  ```
-- 只从你自己的仓库 Releases 页下载，不要信任转发的链接。
+**只此一次**。之后密钥固定不变，更新照常覆盖，数据不动。
 
----
+## 历史与残留
 
-## 二、彻底解决：轮换密钥（需要你手动做一次）
+- git 历史里仍能看到**旧密钥**和旧口令 —— 但旧密钥已作废，留着没有利用价值；
+- 历史提交里也能看到早期的本地绝对路径（属于开发痕迹，不含账号密码）；
+- 想彻底抹掉需要重写全部提交并 force push，会影响已有的 release 标签，一般没必要做。
 
-密钥一旦公开过，就**无法收回**（git 历史里永久存在）。唯一彻底的办法是换一把新的。
+## 构建时的密钥要求
 
-代价：新密钥签名的 APK **不能覆盖**旧版安装，必须先卸载重装 —— 而卸载会清空 App 数据。
+CI 从 Secrets 还原密钥；**没有配置就会构建失败**（这是有意的，避免产出一个装不上去的 APK）。
 
-操作步骤：
+配置方式：仓库 → Settings → Secrets and variables → Actions → New repository secret
 
-1. **先导出数据**：App 里把重要对话逐个「导出这个对话」，或到设置里「备份到文件」；
-2. 在本地生成新密钥：
-   ```bash
-   keytool -genkeypair -v -keystore koudai.jks -storetype PKCS12 -alias koudai \
-     -keyalg RSA -keysize 2048 -validity 10000 \
-     -storepass "换成你的新口令" -keypass "同上" \
-     -dname "CN=Koudai App, OU=SelfUse, O=Personal, L=City, ST=State, C=CN"
-   ```
-3. 把新密钥转成 base64 存进 GitHub Secrets：
-   ```bash
-   base64 -w0 koudai.jks
-   ```
-   仓库 → Settings → Secrets and variables → Actions → New repository secret：
-   | 名称 | 值 |
-   |---|---|
-   | `KEYSTORE_BASE64` | 上一步输出的 base64 |
-   | `KEYSTORE_PASSWORD` | 新口令 |
-4. 从仓库里删掉旧密钥：
-   ```bash
-   git rm --cached android/app/koudai.jks
-   echo "android/app/koudai.jks" >> .gitignore
-   ```
-5. 卸载手机上的旧版 → 装新构建 → 导入备份。
+| 名称 | 值 |
+|---|---|
+| `KEYSTORE_BASE64` | `koudai.p12` 的 base64（单行） |
+| `KEYSTORE_PASSWORD` | 密钥库口令 |
 
-> 做完第 3 步之后，workflow 会自动优先使用 Secrets 里的密钥；仓库内那份旧密钥可以安全删除。
+本地构建则可以自己放一个 `android/app/koudai.p12`，并设置环境变量 `KOUDAL_STORE_PASS`。
 
----
+## 已做的加固
 
-## 三、已经做的加固（本次）
+| 项目 | 状态 |
+|---|---|
+| 触发条件 | 仅 `main` 分支 + 手动触发 |
+| Token 权限 | 默认 `contents: read`，只有发版 job 提权 |
+| 第三方 action | 全部锁定 commit SHA |
+| checkout 凭据 | `persist-credentials: false` |
+| 发布产物 | APK + **SHA-256** + 大小，可校验 |
+| 版本号 | 跟随构建号（`1.0.<run>`） |
+| 密钥 | 不进仓库，走 Secrets |
 
-| 项目 | 之前 | 现在 |
-|---|---|---|
-| 触发条件 | 任意分支 push 都构建并发版 | **仅 `main`** + 手动触发 |
-| Token 权限 | job 级 `contents: write` | 默认 `contents: read`，只有发版 job 提权 |
-| 第三方 action | `@v4`（标签可被上游改写） | **锁定 commit SHA** |
-| checkout 凭据 | 默认留在本地 | `persist-credentials: false` |
-| 发布产物 | 只有 APK | APK + **SHA-256**、大小 |
-| 签名口令 | 写死在 gradle | 优先读 Secrets，缺省才回退 |
-| 版本号 | 永远是 1.0 | 跟随构建号（`1.0.<run>`） |
+## 数据安全
 
----
+- API Key、对话内容**只存在手机本地**，仓库和历史里从来没有过；
+- 导出的 JSON 备份会主动剔除 `apiKey` 字段；
+- 导出 Markdown 只写到手机「下载」目录。
 
-## 四、没有暴露的部分
+## 建议
 
-- **你的 API Key**：只存在于手机本地存储，不进仓库、不进备份文件（导出 JSON 时会主动清空 `apiKey` 字段）；
-- **对话内容**：同上，纯本地；
-- **仓库里没有任何 secret 文件**（已用 `git grep` 全量核查）。
-
----
-
-## 五、如果你想要更强的隔离
-
-- 把仓库改为 **private**：能挡住"顺手克隆"的人，但挡不住已经看过历史的人（密钥已经泄露，改私有不能收回）；
-- 给 GitHub 账号开 **2FA**：真正的高价值目标其实是账号 —— 拿到账号就能直接改源码发版，比偷密钥更省事；
-- 定期检查 Releases 页有没有你不认识的 tag。
+- 给 GitHub 账号开 **2FA** —— 账号比密钥更值钱，拿到账号可以直接改源码发版；
+- 每次下载 APK 后核对 Release 里的 SHA-256；
+- 定期看一眼 Releases 页有没有你不认识的版本。

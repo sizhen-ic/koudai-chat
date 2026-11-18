@@ -112,12 +112,16 @@ start index.html
 # 或用本地服务（数据写在磁盘）
 node server.mjs            # 默认 8788 端口
 
-# 跑测试
+# 跑测试（会自动定位仓库根目录）
 node dev/test.js           # 逻辑 39 项
 node dev/test-math.js      # 公式 10 项
 node dev/test-attach.js    # 附件 21 项
 node dev/test-http.js      # 接口 6 项
 node dev/test-native.js    # 原生桥 9 项
+
+# 重新生成图标（把方形原图放成 icon-src.png）
+python dev/make-icons.py
+python dev/make-android-icons.py
 ```
 
 ---
@@ -130,4 +134,17 @@ node dev/test-native.js    # 原生桥 9 项
 v1.0.<构建号>  →  蓝色大肥鱼 v1.0.<构建号>
 ```
 
-需要仓库里存在签名密钥（`android/app/koudai.jks`）或配置 `KEYSTORE_BASE64` Secret，否则构建会中止——避免产出一个装不上去的 APK。
+**签名密钥不进仓库**，CI 从 Secrets 还原，需要先配置：
+
+| Secret | 内容 |
+|---|---|
+| `KEYSTORE_BASE64` | 密钥库（PKCS12）的 base64，单行 |
+| `KEYSTORE_PASSWORD` | 密钥库口令 |
+
+没配置会直接构建失败 —— 避免产出一个装不上去的 APK。详见 [SECURITY.md](SECURITY.md)。
+
+本地构建：把 `koudai.p12` 放到 `android/app/`，并设置环境变量 `KOUDAL_STORE_PASS`。
+
+## 许可
+
+代码为 MIT（见 [LICENSE](LICENSE)）；图像素材仅供个人使用，商用请自行替换。

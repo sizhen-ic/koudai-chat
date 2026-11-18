@@ -2,11 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
-// 固定签名：密钥一旦确定，之后所有构建都相同 → 可以直接覆盖安装。
-// 口令优先读环境变量，读不到才回退到历史值（该值已在公开仓库历史里，视为已泄露）。
-def keystoreFile = file('koudai.jks')
-def hasKeystore = keystoreFile.exists()
-def ksPass = System.getenv('KOUDAL_STORE_PASS') ?: 'koudai123456'
+// 签名：密钥库不进仓库，构建时由 CI 从 Secrets 还原（见 SECURITY.md）。
+// 本地构建时也可以自己放一个 koudai.p12 并导出 KOUDAL_STORE_PASS。
+def keystoreFile = file('koudai.p12')
+def ksPass = System.getenv('KOUDAL_STORE_PASS')
+def ksAlias = System.getenv('KOUDAL_KEY_ALIAS') ?: 'koudai'
+def hasKeystore = keystoreFile.exists() && ksPass != null && ksPass.length() > 0
+if (keystoreFile.exists() && !hasKeystore) {
+    logger.warn('[koudai] 找到 koudai.p12 但环境变量 KOUDAL_STORE_PASS 为空，本次将不签名')
+}
 
 def vCode = 1
 def vName = '1.0'
@@ -31,8 +35,9 @@ android {
         koudai {
             if (hasKeystore) {
                 storeFile keystoreFile
+                storeType 'PKCS12'
                 storePassword ksPass
-                keyAlias 'koudai'
+                keyAlias ksAlias
                 keyPassword ksPass
             }
         }

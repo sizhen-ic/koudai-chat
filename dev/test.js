@@ -1,8 +1,9 @@
 /* Node + 最小 DOM 桩：验证启动路径、Markdown、压缩算法、模型/会话逻辑 */
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
-const BASE = 'C:/Users/zhenge/Documents/deepseek-harness/default-workspace/phone-chat/';
+const BASE = path.join(__dirname, '..') + '/';
 const HTML = fs.readFileSync(BASE + 'index.html', 'utf8');
 const START = '/*__APP_JS_START__*/';
 const END = '/*__APP_JS_END__*/';

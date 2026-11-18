@@ -7,3 +7,9 @@ android/local.properties
 *.apk
 
 dev/_*.js
+
+# 签名密钥绝不入库
+android/app/koudai.p12
+android/app/koudai.jks
+*.jks
+*.p12

@@ -1,5 +1,6 @@
 const fs = require('node:fs');
-const p = 'C:/Users/zhenge/Documents/deepseek-harness/default-workspace/phone-chat/index.html';
+const path = require('node:path');
+const p = path.join(__dirname, '..', 'index.html');
 const src = fs.readFileSync(p, 'utf8');
 
 const defined = new Set();

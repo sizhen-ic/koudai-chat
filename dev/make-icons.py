@@ -1,77 +1,45 @@
+"""从一张方形原图生成各类应用图标。
+
+用法：
+    python dev/make-icons.py [原图路径]
+
+不带参数时读取仓库根目录的 icon-src.png，输出：
+    icon-512.png / icon-192.png / icon-maskable-512.png
+    apple-touch-icon.png / favicon.png
+"""
 import os
-from PIL import Image, ImageDraw, ImageFilter
+import sys
 
-OUT = r"C:\Users\zhenge\Documents\deepseek-harness\default-workspace\phone-chat"
+from PIL import Image
 
-def lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "icon-src.png")
 
-def gradient(size, c1, c2):
-    img = Image.new("RGB", (size, size))
-    d = ImageDraw.Draw(img)
-    for y in range(size):
-        for_x = y / max(1, size - 1)
-        # 对角线渐变
-        d.line([(0, y), (size, y)], fill=lerp(c1, c2, for_x))
-    return img
+if not os.path.exists(SRC):
+    sys.exit("找不到原图：%s\n把一个 1024x1024 的方形图片放成 icon-src.png，或直接传路径。" % SRC)
 
-def rounded_mask(size, radius):
-    m = Image.new("L", (size, size), 0)
-    d = ImageDraw.Draw(m)
-    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
-    return m
+img = Image.open(SRC).convert("RGB")
+side = min(img.size)
+left = (img.size[0] - side) // 2
+top = (img.size[1] - side) // 2
+face = img.crop((left, top, left + side, top + side))
+print("原图 %s -> 居中裁成 %dx%d" % (img.size, side, side))
 
-def draw_glyph(img, scale=1.0, bubble_w=0.62, bubble_h=0.46, cy=0.50):
-    """在 img 上画一个白色对话气泡 + 三个点。"""
-    S = img.size[0]
-    d = ImageDraw.Draw(img)
-    w = int(S * bubble_w * scale)
-    h = int(S * bubble_h * scale)
-    x = (S - w) // 2
-    y = int(S * cy - h // 2)
-    r = int(h * 0.34)
-    d.rounded_rectangle([x, y, x + w, y + h], radius=r, fill=(255, 255, 255, 255))
-    # 尾巴
-    tail = int(h * 0.30)
-    tx = x + int(w * 0.26)
-    d.polygon([(tx, y + h - 2), (tx + tail, y + h - 2), (tx + int(tail * 0.15), y + h + tail)], fill=(255, 255, 255, 255))
-    # 三个点
-    dot = max(5, int(S * 0.030 * scale))
-    gap = int(dot * 2.35)
-    cx = x + w // 2
-    cyd = y + h // 2
-    for k in (-1, 0, 1):
-        px = cx + k * gap
-        d.ellipse([px - dot, cyd - dot, px + dot, cyd + dot], fill=(43, 75, 208, 255))
 
-# ---------- 常规图标（圆角方块） ----------
-for size in (192, 512):
-    base = gradient(size, (74, 125, 255), (43, 75, 208)).convert("RGBA")
-    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw_glyph(layer)
-    base = Image.alpha_composite(base, layer)
-    base.putalpha(rounded_mask(size, int(size * 0.22)))
-    base.save(os.path.join(OUT, f"icon-{size}.png"))
-    print("wrote", f"icon-{size}.png")
+def save(size, name):
+    face.resize((size, size), Image.LANCZOS).save(os.path.join(ROOT, name))
+    print("  %-24s %dx%d" % (name, size, size))
 
-# ---------- maskable（满幅背景，图形收在安全区） ----------
-size = 512
-base = gradient(size, (74, 125, 255), (43, 75, 208)).convert("RGBA")
-layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-draw_glyph(layer, scale=0.74)
-base = Image.alpha_composite(base, layer)
-base.save(os.path.join(OUT, "icon-maskable-512.png"))
-print("wrote icon-maskable-512.png")
 
-# ---------- apple-touch-icon（不透明底） ----------
-size = 180
-base = gradient(size, (74, 125, 255), (43, 75, 208)).convert("RGBA")
-layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-draw_glyph(layer, scale=1.0)
-base = Image.alpha_composite(base, layer).convert("RGB")
-base.save(os.path.join(OUT, "apple-touch-icon.png"))
-print("wrote apple-touch-icon.png")
+save(512, "icon-512.png")
+save(192, "icon-192.png")
+save(64, "favicon.png")
+save(180, "apple-touch-icon.png")
 
-# ---------- favicon ----------
-base.resize((64, 64), Image.LANCZOS).save(os.path.join(OUT, "favicon.png"))
-print("wrote favicon.png")
+# maskable：四周留出安全区，避免被系统裁成圆形时切到主体
+pad = Image.new("RGB", (512, 512), (18, 26, 46))
+inner = face.resize((int(512 * 0.72), int(512 * 0.72)), Image.LANCZOS)
+off = (512 - inner.size[0]) // 2
+pad.paste(inner, (off, off))
+pad.save(os.path.join(ROOT, "icon-maskable-512.png"))
+print("  %-24s 512x512 (含安全区)")
