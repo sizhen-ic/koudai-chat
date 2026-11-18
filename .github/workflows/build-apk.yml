@@ -80,7 +80,7 @@ jobs:
           mkdir -p app/src/main/assets
           cp ../index.html ../sw.js ../manifest.webmanifest \
              ../icon-192.png ../icon-512.png ../icon-maskable-512.png \
-             ../apple-touch-icon.png ../favicon.png \
+             ../apple-touch-icon.png ../favicon.png ../bg.jpg \
              app/src/main/assets/
           rm -rf app/src/main/assets/katex
           cp -r ../katex app/src/main/assets/katex

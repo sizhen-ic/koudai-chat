@@ -8,8 +8,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="口袋">
-<title>口袋对话</title>
+<meta name="apple-mobile-web-app-title" content="大肥鱼">
+<title>蓝色大肥鱼</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -381,10 +381,111 @@ header{position:sticky;top:0}
 .iconbtn .ic{width:19px;height:19px}
 .sendbtn .ic{width:19px;height:19px;stroke-width:2.2}
 .iconbtn:active .ic{opacity:.75}
+
+/* =========================================================
+   蓝色大肥鱼 · 动态背景 + 玻璃质感
+   ========================================================= */
+:root{
+  --bg:#0a1224; --bg2:rgba(255,255,255,.07); --bg3:rgba(255,255,255,.12);
+  --line:rgba(150,195,255,.18); --line2:rgba(150,195,255,.12);
+  --fg:#eaf3ff; --fg2:#aac6ea; --fg3:#7d97bb;
+  --accent:#5aa6ff; --accent2:#3f86e0; --user:rgba(90,166,255,.22);
+  --danger:#ff6b6b; --ok:#5ee0a0;
+}
+html,body{background:#08101f}
+#bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+#bg .bgimg{
+  position:absolute;inset:-8%;
+  background:url(bg.jpg) center/cover no-repeat;
+  animation:bgDrift 48s ease-in-out infinite alternate;
+  transform-origin:62% 38%;
+  filter:saturate(1.05) brightness(.92);
+}
+#bg .bgglow{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(58% 42% at 72% 18%, rgba(130,195,255,.20), transparent 72%),
+    radial-gradient(52% 40% at 18% 82%, rgba(70,130,255,.16), transparent 72%),
+    linear-gradient(180deg, rgba(6,12,26,.42), rgba(6,12,26,.72));
+  animation:glowPulse 18s ease-in-out infinite alternate;
+}
+@keyframes bgDrift{
+  from{transform:scale(1.02) translate3d(0,0,0)}
+  to{transform:scale(1.12) translate3d(-2%,-1.5%,0)}
+}
+@keyframes glowPulse{from{opacity:.82}to{opacity:1}}
+#app{position:relative;z-index:1}
+
+/* 顶栏 / 输入区：毛玻璃 */
+header{
+  background:rgba(10,18,36,.42) !important;
+  backdrop-filter:blur(20px) saturate(170%);
+  -webkit-backdrop-filter:blur(20px) saturate(170%);
+  border-bottom:1px solid rgba(150,195,255,.14);
+}
+#composer{
+  background:rgba(10,18,36,.46);
+  backdrop-filter:blur(20px) saturate(160%);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);
+  border-top:1px solid rgba(150,195,255,.16);
+  box-shadow:0 -14px 34px rgba(0,0,0,.35);
+}
+.inputrow{
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(160,200,255,.20);
+  backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+}
+.inputrow:focus-within{border-color:rgba(120,180,255,.45)}
+.chip{background:rgba(255,255,255,.06)}
+.chip.on{background:rgba(90,166,255,.22);border-color:rgba(120,180,255,.55);color:#cfe4ff}
+.roundbtn,.sendbtn{background:rgba(255,255,255,.07);border-color:rgba(160,200,255,.22)}
+.balchip{background:rgba(255,255,255,.06)}
+
+/* 气泡 */
+.turn.assistant .bubble{background:transparent}
+.turn.user .bubble{
+  background:rgba(90,166,255,.22);
+  border:1px solid rgba(150,200,255,.26);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+}
+.think-body{border-left-color:rgba(150,195,255,.22)}
+
+/* 抽屉 / 设置 / 面板 */
+#drawer{
+  background:rgba(9,16,32,.72);
+  backdrop-filter:blur(26px) saturate(150%);
+  -webkit-backdrop-filter:blur(26px) saturate(150%);
+  border-right:1px solid rgba(150,195,255,.16);
+}
+#settings{
+  background:rgba(9,16,32,.88);
+  backdrop-filter:blur(26px);
+  -webkit-backdrop-filter:blur(26px);
+}
+#sheet,#modal{
+  background:rgba(16,26,48,.88);
+  backdrop-filter:blur(24px);
+  -webkit-backdrop-filter:blur(24px);
+  border:1px solid rgba(150,195,255,.20);
+}
+.field input[type=text],.field input[type=password],.field input[type=number],.field textarea,.field select{
+  background:rgba(255,255,255,.07);
+  border-color:rgba(160,200,255,.20);
+}
+#search{background:rgba(255,255,255,.07);border-color:rgba(160,200,255,.18)}
+.convitem.active,.convitem:active{background:rgba(90,166,255,.16)}
+#toast{background:rgba(9,16,32,.88);backdrop-filter:blur(10px)}
+.footnote{color:rgba(170,198,234,.7)}
 .footnote{text-align:center;font-size:10.5px;color:var(--fg3);padding-top:2px;opacity:.75}
 </style>
 </head>
 <body>
+<div id="bg" aria-hidden="true">
+  <div class="bgimg"></div>
+  <div class="bgglow"></div>
+</div>
 <div id="app">
   <header>
     <button class="iconbtn" id="btnMenu" aria-label="会话列表">
@@ -544,7 +645,7 @@ header{position:sticky;top:0}
 
     <div class="section">关于</div>
     <div class="hint" style="margin-bottom:34px">
-      口袋对话 v2 · 纯本地，没有服务器，没有账号。<br>
+      蓝色大肥鱼 v1 · 纯本地，没有服务器，没有账号。<br>
       对话只保存在这台手机的浏览器里，界面调用你自己填的 API。<br>
       上下文不会用完：超出预算的早期内容自动摘要，原文永远可查。
     </div>
