@@ -358,6 +358,16 @@ details.think[open] summary .chev{transform:rotate(90deg)}
 }
 .balchip.low{color:#ff8f6b;border-color:#ff8f6b55}
 .balchip:active{background:var(--bg3)}
+
+/* ===== 原生整页滚动：滚动手势全部交给系统 ===== */
+html,body{height:auto;min-height:100%}
+body{overflow-y:auto;overscroll-behavior:auto}
+#app{display:block;height:auto;min-height:100vh}
+header{position:fixed;top:0;left:0;right:0;z-index:30}
+#messages{overflow:visible;padding-top:calc(var(--hdr, 68px) + 6px);padding-bottom:calc(var(--ftr, 150px) + 10px)}
+#msginner{min-height:0;will-change:auto}
+#composer{position:fixed;left:0;right:0;bottom:0;z-index:30}
+#gobottom{position:fixed;right:14px;bottom:calc(var(--ftr, 150px) + 12px);z-index:25}
 .footnote{text-align:center;font-size:10.5px;color:var(--fg3);padding-top:2px;opacity:.75}
 </style>
 </head>
@@ -1126,19 +1136,21 @@ function renderMessages() {
 /** 是否贴着底部（留一点容差，手指没那么准） */
 let scrollPinned = true;
 
+const scroller = () => document.scrollingElement || document.documentElement || document.body;
+
 function isAtBottom() {
-  const box = msgEl();
-  return box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const s = scroller();
+  return s.scrollHeight - s.scrollTop - s.clientHeight < 120;
 }
 
 /**
  * force=true：强制回到底部并重新跟随
- * 否则：只在用户没有主动上滑时才跟随，避免生成时跟手指抢滚动条
+ * 否则：只在用户没有主动上滑时才跟随，避免生成时跟手指抢滚动
  */
 function scrollBottom(force) {
-  const box = msgEl();
+  const s = scroller();
   if (force) scrollPinned = true;
-  if (force || scrollPinned) box.scrollTop = box.scrollHeight;
+  if (force || scrollPinned) s.scrollTop = s.scrollHeight;
   $('#gobottom').classList.toggle('show', !isAtBottom());
 }
 
@@ -2171,22 +2183,39 @@ $('#fTemp').addEventListener('input', (e) => { $('#tempVal').textContent = Numbe
 $('#search').addEventListener('input', (e) => { S.search = e.target.value || ''; renderConvList(); });
 
 $('#gobottom').addEventListener('click', () => {
-  const box = msgEl();
   scrollPinned = true;
-  try {
-    if (typeof box.scrollTo === 'function') box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
-    else box.scrollTop = box.scrollHeight;
-  } catch (e) { box.scrollTop = box.scrollHeight; }
+  try { window.scrollTo({ top: scroller().scrollHeight, behavior: 'smooth' }); }
+  catch (e) { scroller().scrollTop = scroller().scrollHeight; }
   $('#gobottom').classList.remove('show');
 });
 
-msgEl().addEventListener('scroll', () => {
+window.addEventListener('scroll', () => {
   if (isAtBottom()) scrollPinned = true;
   $('#gobottom').classList.toggle('show', !isAtBottom());
 }, { passive: true });
 
 // 手指一碰就让出滚动控制权，生成中也能自由上下翻
 msgEl().addEventListener('touchstart', () => { scrollPinned = false; }, { passive: true });
+
+/* 页头与输入框是 fixed 的，用 CSS 变量把高度告诉消息区留白 */
+function syncPaneHeights() {
+  const root = document.documentElement;
+  if (!root || !root.style) return;
+  const h = document.querySelector ? document.querySelector('header') : null;
+  const f = $('#composer');
+  if (h && h.offsetHeight) root.style.setProperty('--hdr', h.offsetHeight + 'px');
+  if (f && f.offsetHeight) root.style.setProperty('--ftr', f.offsetHeight + 'px');
+}
+
+if (typeof ResizeObserver === 'function') {
+  const ro = new ResizeObserver(syncPaneHeights);
+  const h = document.querySelector ? document.querySelector('header') : null;
+  const f = $('#composer');
+  if (h) ro.observe(h);
+  if (f) ro.observe(f);
+}
+window.addEventListener('resize', syncPaneHeights);
+syncPaneHeights();
 
 msgEl().addEventListener('click', (e) => {
   const t = e.target;
@@ -2225,212 +2254,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* =========================================================
-   橡皮筋回弹（Android WebView 的内层滚动没有原生回弹）
+   滚动：整页原生滚动，惯性 / 回弹 / 光晕全部交给系统
    ========================================================= */
-(function initRubberBand() {
-  const box = msgEl();
-  const inner = $('#msginner');
-  if (!box || !inner || !box.addEventListener) return;
-
-  const LIMIT = 10;          // 一次最多拉开多少个「块」
-  let targets = [];          // 叶子块：段落 / 列表 / 代码块 / 用户气泡
-  let touched = [];
-  let lastY = 0;
-  let offset = 0;
-  let dragging = false;
-  let active = false;
-  let raf = 0;
-  let metrics = { sh: 0, ch: 0 };
-  let paintQueued = false;
-
-  // 缓存滚动尺寸，避免每次 touchmove 触发强制重排（这是卡顿主因）
-  function refreshMetrics() {
-    metrics.sh = box.scrollHeight;
-    metrics.ch = box.clientHeight;
-  }
-  const atTop = () => box.scrollTop <= 0;
-  const atBottom = () => metrics.sh - box.scrollTop - metrics.ch <= 1;
-
-  // 一帧最多画一次
-  function queuePaint() {
-    if (paintQueued || raf) return;
-    paintQueued = true;
-    requestAnimationFrame(() => {
-      paintQueued = false;
-      if (!active) return;
-      paint(offset);
-    });
-  }
-
-  function collect() {
-    targets = [];
-    // 用户消息：动整个气泡（只动文字会跑出气泡、压到别处）
-    // 助手消息：动每个段落/列表/代码块，这样才能看出段落被拉开
-    const turns = inner.querySelectorAll ? inner.querySelectorAll('.turn') : [];
-    for (let i = 0; i < turns.length; i++) {
-      const t = turns[i];
-      const bubble = t.querySelector ? t.querySelector('.bubble') : null;
-      const isUser = t.classList && t.classList.contains('user');
-      if (isUser) {
-        targets.push({ el: bubble || t, k: 1 });
-        continue;
-      }
-      const kids = bubble && bubble.children ? bubble.children : null;
-      if (kids && kids.length) {
-        for (let j = 0; j < kids.length; j++) targets.push({ el: kids[j], k: 1 });
-      } else {
-        targets.push({ el: bubble || t, k: 1 });
-      }
-    }
-    if (!targets.length) {
-      const em = inner.querySelectorAll ? inner.querySelectorAll('.empty') : [];
-      for (let j = 0; j < em.length; j++) targets.push({ el: em[j], k: 1 });
-    }
-    // 临时提升为合成层，让位移在 GPU 上完成
-    const lift = Math.min(targets.length, LIMIT);
-    for (let k = 0; k < lift; k++) {
-      if (targets[k].el && targets[k].el.style) targets[k].el.style.willChange = 'transform';
-    }
-    const liftEnd = Math.min(targets.length, LIMIT);
-    for (let k = 0; k < liftEnd; k++) {
-      const el = targets[targets.length - 1 - k].el;
-      if (el && el.style) el.style.willChange = 'transform';
-    }
-  }
-
-  /** off > 0：从顶部往下拉；off < 0：从底部往上推 */
-  function paint(off) {
-    const n = targets.length;
-    if (!n) return;
-    const limit = Math.min(n, LIMIT);
-    const down = off > 0;
-
-    for (let i = 0; i < touched.length; i++) {
-      const el = touched[i];
-      if (el && el.style) { el.style.transition = 'none'; el.style.transform = ''; }
-    }
-    touched = [];
-
-    for (let k = 0; k < limit; k++) {
-      const item = down ? targets[k] : targets[n - 1 - k];
-      if (!item || !item.el || !item.el.style) continue;
-      // 指数 < 1：靠近拉动端衰减更快，那里的间距被拉得更大
-      const w = Math.pow((limit - 1 - k) / Math.max(1, limit - 1), 0.55) * item.k;
-      // translate3d 走 GPU 合成，避免每帧重排
-      item.el.style.transform = 'translate3d(0,' + (off * w).toFixed(1) + 'px,0)';
-      touched.push(item.el);
-    }
-  }
-
-  function clear(animate) {
-    const list = touched;
-    touched = [];
-    for (let i = 0; i < list.length; i++) {
-      const el = list[i];
-      if (!el || !el.style) continue;
-      el.style.transition = animate ? 'transform .42s cubic-bezier(.22,1.2,.4,1)' : 'none';
-      el.style.transform = '';
-    }
-    if (animate) {
-      setTimeout(() => {
-        for (let i = 0; i < list.length; i++) {
-          if (list[i].style) { list[i].style.transition = ''; list[i].style.willChange = ''; }
-        }
-      }, 460);
-    } else {
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].style) list[i].style.willChange = '';
-      }
-    }
-    refreshMetrics();
-  }
-
-  /** 滑到尽头时的缓冲：阻尼正弦，向外冲一下再收回来 */
-  function flingBump(dir) {
-    if (!targets.length) return;
-    cancelAnimationFrame(raf);
-    const t0 = Date.now();
-    const DUR = 380;
-    const AMP = 34;
-    const step = () => {
-      const k = Math.min(1, (Date.now() - t0) / DUR);
-      const v = Math.sin(k * Math.PI * 2.0) * Math.exp(-3.0 * k) * AMP * dir;
-      paint(v);
-      if (k < 1) raf = requestAnimationFrame(step);
-      else clear(false);
-    };
-    raf = requestAnimationFrame(step);
-  }
-
-  function springBack() {
-    if (!active) return;
-    active = false;
-    offset = 0;
-    clear(true);
-  }
-
-  box.addEventListener('touchstart', (e) => {
-    if (!e.touches || e.touches.length !== 1) return;
-    refreshMetrics();
-    collect();
-    lastY = e.touches[0].clientY;
-    dragging = true;
-  }, { passive: true });
-
-  box.addEventListener('touchmove', (e) => {
-    if (!dragging || !e.touches || e.touches.length !== 1) return;
-    const y = e.touches[0].clientY;
-    const dy = y - lastY;
-    lastY = y;
-
-    const pullDown = dy > 0 && atTop();
-    const pullUp = dy < 0 && atBottom();
-    if (!pullDown && !pullUp) return;
-
-    active = true;
-    // 阻力随拉长变大，越拉越沉
-    const resist = 0.85 * (1 - Math.min(Math.abs(offset), 260) / 900);
-    offset += dy * resist;
-    offset = Math.max(-260, Math.min(260, offset));
-    queuePaint();
-    if (e.cancelable) e.preventDefault();
-  }, { passive: false });
-
-  box.addEventListener('touchend', () => { dragging = false; springBack(); }, { passive: true });
-  box.addEventListener('touchcancel', () => { dragging = false; springBack(); }, { passive: true });
-
-  /* 快速滑到尽头：补一个缓冲动画，避免硬停 */
-  const samples = [];
-  let lastBump = 0;
-  let lastMetricAt = 0;
-
-  function velocity() {
-    if (samples.length < 2) return 0;
-    const a = samples[0];
-    const b = samples[samples.length - 1];
-    const dt = b[0] - a[0];
-    return dt > 0 ? (b[1] - a[1]) / dt : 0;
-  }
-
-  box.addEventListener('scroll', () => {
-    const now = Date.now();
-    samples.push([now, box.scrollTop]);
-    while (samples.length > 2 && now - samples[0][0] > 140) samples.shift();
-
-    // 尺寸最多每 300ms 读一次，避免滚动时反复强制重排
-    if (now - lastMetricAt > 300) { lastMetricAt = now; refreshMetrics(); }
-
-    if (active || dragging) return;
-    if (now - lastBump < 900) return;
-
-    const v = velocity();
-    if (atBottom() && v > 0.9) {
-      lastBump = now; samples.length = 0; collect(); flingBump(-1);
-    } else if (atTop() && v < -0.9) {
-      lastBump = now; samples.length = 0; collect(); flingBump(1);
-    }
-  }, { passive: true });
-})();
 
 /* =========================================================
    账户余额（官方 /user/balance）
