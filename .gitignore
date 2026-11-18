@@ -1,4 +1,5 @@
 ﻿data/
+build/
 android/.gradle/
 android/build/
 android/app/build/
