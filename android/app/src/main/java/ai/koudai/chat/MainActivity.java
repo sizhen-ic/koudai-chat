@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.webkit.ValueCallback;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -105,12 +106,25 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK && web != null && web.canGoBack()) {
-            web.goBack();
-            return true;
+    public void onBackPressed() {
+        if (web == null) {
+            super.onBackPressed();
+            return;
         }
-        return super.onKeyDown(keyCode, event);
+        // 先让页面处理（关弹层/抽屉），没处理掉才退出
+        web.evaluateJavascript(
+                "(function(){try{return window.__koudaiBack?!!window.__koudaiBack():false}catch(e){return false}})()",
+                new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String value) {
+                        if ("true".equals(value)) return;
+                        if (web != null && web.canGoBack()) {
+                            web.goBack();
+                            return;
+                        }
+                        finish();
+                    }
+                });
     }
 
     @Override
