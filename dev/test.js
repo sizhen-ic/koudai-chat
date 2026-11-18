@@ -89,7 +89,7 @@ setTimeout(async () => {
   ok('标题渲染', byId('convTitle').textContent === '新的对话', byId('convTitle').textContent);
   ok('模型标签渲染', byId('modelName').textContent === 'deepseek-flash', byId('modelName').textContent);
   ok('降级 localStorage 已写入', store.size > 0, [...store.keys()].join(','));
-  ok('上下文文案', /上下文 0%/.test(byId('ctxText').textContent), byId('ctxText').textContent);
+  ok('剩余量文案', /剩余\s[\d.]+k/.test(byId('ctxText').textContent), byId('ctxText').textContent);
 
   /* Markdown */
   ok('md 粗体', K.md('**粗体**').includes('<strong>粗体</strong>'), K.md('**粗体**'));

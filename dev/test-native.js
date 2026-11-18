@@ -40,7 +40,7 @@ const bridge = {
   snapshot() { return true; },
 };
 
-let fetchCalls = 0;
+const fetchUrls = [];
 const ctx = {
   console: { log() {}, warn() {}, error() {} },
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
@@ -55,7 +55,7 @@ const ctx = {
   setTimeout, clearTimeout, Promise, Math, Date, JSON, Object, Array, String, Number, Error, RegExp, Set, Map,
   confirm: () => true, alert: () => {}, prompt: () => 'x',
   Blob: function () {}, URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },
-  fetch: () => { fetchCalls++; return Promise.reject(new Error('should not fetch')); },
+  fetch: (u) => { fetchUrls.push(String(u)); return Promise.reject(new Error('offline')); },
   indexedDB: undefined,
 };
 ctx.globalThis = ctx;
@@ -70,7 +70,7 @@ setTimeout(async () => {
   if (!K) { console.log(results.join('\n') + '\nFAIL 未导出'); process.exit(1); }
 
   ok('启动了读取桥', calls.includes('load'), JSON.stringify(calls));
-  ok('没有走网络存储', fetchCalls === 0, 'fetch=' + fetchCalls);
+  ok('没有走网络存储', !fetchUrls.some((u) => u.includes('api/state')), fetchUrls.join(','));
   ok('读到了 App 文件里的会话', K.S.convs.length === 1 && K.S.convs[0].title === '来自手机文件', 'convs=' + K.S.convs.length);
   ok('设置来自 App 文件', K.S.settings.model === 'deepseek-flash' && K.S.settings.apiKey === 'sk-native');
 

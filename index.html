@@ -281,7 +281,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
 /* ===== 对齐官方 App 的排版（后置覆盖） ===== */
 body{font-size:17px;line-height:1.78;overscroll-behavior:auto}
-#messages{overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;scroll-behavior:auto}
+#messages{overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;scroll-behavior:auto}
+#msginner{min-height:100%;will-change:transform}
+.empty{min-height:60vh}
 .bubble{contain:layout style}
 .hinfo b{font-size:16.5px;font-weight:600}
 #messages{padding:16px 16px 10px}
@@ -309,6 +311,12 @@ body{font-size:17px;line-height:1.78;overscroll-behavior:auto}
 .roundbtn:active{background:var(--bg3)}
 .sendbtn{width:38px;height:38px;font-size:17px;font-weight:600}
 .statusline{padding:7px 8px 0;opacity:.7}
+.balchip{
+  flex:0 0 auto;border:1px solid var(--line);background:transparent;color:var(--fg2);
+  font-size:11px;padding:2px 9px;border-radius:999px;cursor:pointer;line-height:1.5;
+}
+.balchip.low{color:#ff8f6b;border-color:#ff8f6b55}
+.balchip:active{background:var(--bg3)}
 .footnote{text-align:center;font-size:10.5px;color:var(--fg3);padding-top:2px;opacity:.75}
 </style>
 </head>
@@ -325,6 +333,7 @@ body{font-size:17px;line-height:1.78;overscroll-behavior:auto}
   </header>
 
   <div id="messages">
+    <div id="msginner"></div>
     <button id="gobottom" aria-label="回到底部">↓</button>
   </div>
 
@@ -351,7 +360,8 @@ body{font-size:17px;line-height:1.78;overscroll-behavior:auto}
     <input type="file" id="filePick" multiple accept="image/jpeg,image/png,image/gif,image/webp,.pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.csv,.json,.xlsx,.xls,.epub,.mobi" hidden>
     <div class="statusline">
       <div class="bar"><i id="ctxBar"></i></div>
-      <span id="ctxText">上下文 0%</span>
+      <span id="ctxText">剩余 —</span>
+      <button id="balance" class="balchip" title="点击刷新余额">¥ --</button>
     </div>
     <div class="footnote">回答由 AI 生成，仅供参考</div>
   </div>
@@ -929,9 +939,9 @@ function updateChrome() {
   const u = usageOf(c || {});
   $('#ctxBar').style.width = Math.max(2, u.pct || 0) + '%';
   $('#ctxBar').style.background = u.pct > 88 ? 'var(--danger)' : 'var(--accent)';
-  $('#ctxText').textContent = u.used
-    ? '上下文 ' + u.pct + '% · ' + (u.used >= 1000 ? (u.used / 1000).toFixed(1) + 'k' : u.used) + ' / ' + Math.round(u.budget / 1000) + 'k'
-    : '上下文 0%';
+  const rem = Math.max(0, u.budget - u.used);
+  const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)));
+  $('#ctxText').textContent = '剩余 ' + fmt(rem) + ' · ' + (u.pct || 0) + '%';
   updateToggles();
 }
 
@@ -939,6 +949,7 @@ function updateChrome() {
    渲染消息
    ========================================================= */
 const msgEl = () => $('#messages');
+const innerEl = () => $('#msginner') || msgEl();
 
 function makeTurn(m, index, total) {
   const row = document.createElement('div');
@@ -997,7 +1008,7 @@ function makeTurn(m, index, total) {
 }
 
 function renderMessages() {
-  const box = msgEl();
+  const box = innerEl();
   Array.prototype.slice.call(box.querySelectorAll('.turn,.empty,.divnote')).forEach((n) => n.remove());
   const c = S.current;
   const frag = document.createDocumentFragment();
@@ -1623,7 +1634,7 @@ function setStreaming(on) {
 
 async function runCompletion() {
   const conv = S.current;
-  const box = msgEl();
+  const box = innerEl();
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
 
@@ -1713,6 +1724,7 @@ async function runCompletion() {
   await maybeCompact(conv);
   updateChrome();
   scrollBottom(true);
+  refreshBalance(false);
 }
 
 async function sendUser(text, atts) {
@@ -1959,7 +1971,13 @@ $('#filePick').addEventListener('change', (e) => {
   e.target.value = '';
 });
 $('#btnCloseSettings').addEventListener('click', closeSettings);
-$('#btnSave').addEventListener('click', () => { saveSettingsFromForm(); closeSettings(); toast('已保存'); });
+$('#btnSave').addEventListener('click', () => {
+  saveSettingsFromForm();
+  closeSettings();
+  toast('已保存');
+  _lastBalanceAt = 0;
+  refreshBalance(true);
+});
 $('#btnTest').addEventListener('click', testConnection);
 $('#btnModels').addEventListener('click', fetchModels);
 $('#scrim').addEventListener('click', closeDrawer);
@@ -2065,6 +2083,103 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* =========================================================
+   橡皮筋回弹（Android WebView 的内层滚动没有原生回弹）
+   ========================================================= */
+(function initRubberBand() {
+  const box = msgEl();
+  const inner = $('#msginner');
+  if (!box || !inner || !box.addEventListener) return;
+
+  let lastY = 0;
+  let offset = 0;
+  let dragging = false;
+  let active = false;
+
+  const atTop = () => box.scrollTop <= 0;
+  const atBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight <= 1;
+
+  function springBack() {
+    if (!active) return;
+    active = false;
+    offset = 0;
+    inner.style.transition = 'transform .36s cubic-bezier(.22,1.15,.36,1)';
+    inner.style.transform = '';
+    setTimeout(() => { inner.style.transition = ''; }, 380);
+  }
+
+  box.addEventListener('touchstart', (e) => {
+    if (!e.touches || e.touches.length !== 1) return;
+    lastY = e.touches[0].clientY;
+    dragging = true;
+  }, { passive: true });
+
+  box.addEventListener('touchmove', (e) => {
+    if (!dragging || !e.touches || e.touches.length !== 1) return;
+    const y = e.touches[0].clientY;
+    const dy = y - lastY;
+    lastY = y;
+
+    const pullDown = dy > 0 && atTop();
+    const pullUp = dy < 0 && atBottom();
+    if (!pullDown && !pullUp) return;
+
+    active = true;
+    // 阻力随拉长变大，越拉越沉
+    const resist = 0.42 * (1 - Math.min(Math.abs(offset), 160) / 400);
+    offset += dy * resist;
+    offset = Math.max(-160, Math.min(160, offset));
+    inner.style.transition = 'none';
+    inner.style.transform = 'translateY(' + offset.toFixed(1) + 'px)';
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  box.addEventListener('touchend', () => { dragging = false; springBack(); }, { passive: true });
+  box.addEventListener('touchcancel', () => { dragging = false; springBack(); }, { passive: true });
+})();
+
+/* =========================================================
+   账户余额（官方 /user/balance）
+   ========================================================= */
+let _lastBalanceAt = 0;
+
+async function refreshBalance(force) {
+  const el = $('#balance');
+  if (!el) return;
+  if (!S.settings.apiKey) { el.textContent = '¥ --'; return; }
+
+  const now = Date.now();
+  if (!force && now - _lastBalanceAt < 60000) return;
+  _lastBalanceAt = now;
+
+  try {
+    const res = await fetch(rawBase() + '/user/balance', {
+      headers: { 'Authorization': 'Bearer ' + S.settings.apiKey },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      el.textContent = '¥ ?';
+      el.title = '余额查询失败 HTTP ' + res.status;
+      return;
+    }
+    const j = await res.json();
+    const info = (j.balance_infos || [])[0];
+    if (!info) {
+      el.textContent = j.is_available ? '可用' : '余额不足';
+      return;
+    }
+    const sym = info.currency === 'CNY' ? '¥' : (info.currency === 'USD' ? '$' : info.currency + ' ');
+    el.textContent = sym + Number(info.total_balance).toFixed(2);
+    el.title = '赠送 ' + info.granted_balance + ' · 充值 ' + info.topped_up_balance + '（点一下刷新）';
+    el.classList.toggle('low', Number(info.total_balance) < 5);
+  } catch (e) {
+    el.textContent = '¥ --';
+    el.title = '余额查询失败（网络）';
+  }
+}
+
+$('#balance').addEventListener('click', () => { _lastBalanceAt = 0; refreshBalance(true); });
+
+/* =========================================================
    PWA
    ========================================================= */
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
@@ -2107,6 +2222,7 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
   updateChrome();
   renderConvList();
   renderPending();
+  refreshBalance(true);
   if (!S.settings.apiKey) setTimeout(() => toast('先点右上角 ⚙ 填 API Key'), 800);
   if (STORE_MODE === 'ls') setTimeout(() => toast('本地文件模式容量有限，建议用网址打开', 3200), 2200);
 })();
