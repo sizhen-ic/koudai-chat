@@ -324,18 +324,27 @@ details.think[open] summary .chev{transform:rotate(180deg)}
 .actbar{margin-top:6px;gap:4px}
 .actbar button{font-size:12px;padding:4px 9px;border-radius:8px;color:var(--fg3)}
 
-#composer{padding:6px 12px calc(env(safe-area-inset-bottom) + 4px)}
-.inputrow{border-radius:26px;padding:10px 18px;min-height:54px;align-items:center}
-#input{font-size:16.5px;line-height:1.5;padding:0;min-height:24px}
-.toolrow{padding:9px 2px 0;gap:8px}
+#composer{padding:8px 14px calc(env(safe-area-inset-bottom) + 4px)}
+.inputrow{
+  border-radius:30px;padding:16px 22px;min-height:66px;align-items:center;
+  background:var(--bg2);border:1px solid transparent;
+}
+.inputrow:focus-within{border-color:transparent}
+#input{font-size:16.5px;line-height:1.4;padding:0;min-height:24px}
+.toolrow{padding:12px 2px 0;gap:8px}
 .chip{padding:7px 14px;font-size:13px;gap:6px;background:transparent;border-color:var(--line);color:var(--fg2)}
 .chip svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;flex:0 0 auto}
 .chip.on{background:rgba(74,125,255,.16);border-color:rgba(74,125,255,.55);color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
 .grow{flex:1}
-.roundbtn{flex:0 0 auto;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--fg2);display:grid;place-items:center;cursor:pointer}
-.roundbtn svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round}
+.roundbtn{flex:0 0 auto;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--fg2);display:grid;place-items:center;cursor:pointer}
+.roundbtn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round}
 .roundbtn:active{background:var(--bg3)}
-.sendbtn{width:38px;height:38px;font-size:17px;font-weight:600}
+.sendbtn{
+  width:44px;height:44px;border-radius:50%;font-size:17px;font-weight:600;
+  background:transparent;border:1px solid var(--line);color:var(--fg2);transition:background .15s,color .15s,border-color .15s;
+}
+.sendbtn.ready{background:var(--accent);border-color:var(--accent);color:#fff}
+.sendbtn.stop{background:var(--danger);border-color:var(--danger);color:#fff}
 .statusline{padding:7px 8px 0;opacity:.7}
 .balchip{
   flex:0 0 auto;border:1px solid var(--line);background:transparent;color:var(--fg2);
@@ -1641,6 +1650,7 @@ function renderPending() {
     d.appendChild(rm);
     box.appendChild(d);
   }
+  syncSend();
 }
 
 /* =========================================================
@@ -1692,6 +1702,7 @@ function setStreaming(on) {
   } else {
     btn.classList.remove('stop'); btn.disabled = false; btn.textContent = '↑'; btn.setAttribute('aria-label', '发送');
   }
+  syncSend();
 }
 
 async function runCompletion() {
@@ -1870,6 +1881,7 @@ async function send() {
   renderPending();
   input.value = '';
   autosize();
+  syncSend();
   await sendUser(text, atts);
 }
 
@@ -2027,12 +2039,21 @@ async function importFile(file) {
    输入框
    ========================================================= */
 const inputEl = $('#input');
+
+/** 有内容时发送键变成实心蓝色，空着就是灰色空心（和官方一致） */
+function syncSend() {
+  const btn = $('#btnSend');
+  if (!btn) return;
+  const has = (inputEl && inputEl.value.trim().length > 0) || (S.pending && S.pending.length > 0);
+  btn.classList.toggle('ready', !!has && !S.streaming);
+}
+
 function autosize() {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, window.innerHeight * 0.38) + 'px';
 }
 
-inputEl.addEventListener('input', autosize);
+inputEl.addEventListener('input', () => { autosize(); syncSend(); });
 inputEl.addEventListener('compositionstart', () => { inputEl.dataset.ime = '1'; });
 inputEl.addEventListener('compositionend', () => { inputEl.dataset.ime = ''; });
 inputEl.addEventListener('keydown', (e) => {
@@ -2210,7 +2231,7 @@ document.addEventListener('visibilitychange', () => {
   const atTop = () => box.scrollTop <= 0;
   const atBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight <= 1;
 
-  const MAX_ROWS = 18;
+  const MAX_ROWS = 6;
   let touched = [];
 
   /** 逐行位移：越靠近拉动的一端位移越大，行间距因此被拉开 */
@@ -2224,7 +2245,7 @@ document.addEventListener('visibilitychange', () => {
     for (let k = 0; k < limit; k++) {
       const el = down ? kids[k] : kids[n - 1 - k];
       if (!el || !el.style) continue;
-      const w = Math.pow((limit - k) / limit, 1.5);
+      const w = (limit - k) / limit;
       el.style.transition = 'none';
       el.style.transform = 'translateY(' + (off * w).toFixed(1) + 'px)';
       touched.push(el);
@@ -2268,9 +2289,9 @@ document.addEventListener('visibilitychange', () => {
 
     active = true;
     // 阻力随拉长变大，越拉越沉
-    const resist = 0.42 * (1 - Math.min(Math.abs(offset), 160) / 400);
+    const resist = 0.7 * (1 - Math.min(Math.abs(offset), 220) / 700);
     offset += dy * resist;
-    offset = Math.max(-160, Math.min(160, offset));
+    offset = Math.max(-220, Math.min(220, offset));
     inner.style.transition = 'none';
     moveRows(offset);
     if (e.cancelable) e.preventDefault();
@@ -2365,8 +2386,7 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
   updateChrome();
   renderConvList();
   renderPending();
-  refreshBalance(true);
-  if (!S.settings.apiKey) setTimeout(() => toast('先点右上角 ⚙ 填 API Key'), 800);
+  refreshBalance(true);  if (!S.settings.apiKey) setTimeout(() => toast('先点右上角 ⚙ 填 API Key'), 800);
   if (STORE_MODE === 'ls') setTimeout(() => toast('本地文件模式容量有限，建议用网址打开', 3200), 2200);
 })();
 
