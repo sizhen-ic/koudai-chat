@@ -592,9 +592,9 @@ header{
 
     <div class="section">长期记忆</div>
     <div class="field">
-      <label>上下文预算（token）</label>
-      <input type="number" id="fBudget" inputmode="numeric" min="4000" step="1000">
-      <div class="hint">累计超过这个量，最早的片段会被自动压成摘要，原文仍完整保留在手机上。默认 32000；模型窗口大可以调到 64000。</div>
+      <label>自动压缩阈值（字符）</label>
+      <input type="number" id="fChars" inputmode="numeric" min="10000" step="10000">
+      <div class="hint">对话累计到这个字数，就按权重挑出重点、生成记忆，并自动新建一个「原名字 副本」接着聊；原对话一条不删，完整保留。默认 50 万字。</div>
     </div>
     <div class="field">
       <label>系统提示词</label>
@@ -1075,12 +1075,13 @@ const DEFAULTS = {
   apiKey: '',
   model: 'deepseek-flash',
   budget: 32000,
+  compactChars: 500000,
   temperature: 0.7,
   think: true,
   web: false,
   richLayout: false,
   reminder: true,
-  v: 2,
+  v: 3,
   system: '',
 };
 const BUILTIN_MODELS = ['deepseek-flash', 'deepseek-v4-pro'];
@@ -1134,9 +1135,9 @@ const saveSettings = () => idbPut('meta', S.settings, 'settings');
    上下文用量
    ========================================================= */
 function usageOf(c) {
-  let used = estTokens(c.summary || '');
-  for (const m of c.messages) if (!m.archived) used += estMsg(m);
-  const budget = Number(S.settings.budget) || DEFAULTS.budget;
+  let used = String(c.summary || '').length;
+  for (const m of c.messages) if (!m.archived) used += String(m.content || '').length;
+  const budget = Number(S.settings.compactChars) || DEFAULTS.compactChars;
   return { used, budget, pct: Math.min(100, Math.round((used / budget) * 100)) };
 }
 
@@ -1148,8 +1149,8 @@ function updateChrome() {
   $('#ctxBar').style.width = Math.max(2, u.pct || 0) + '%';
   $('#ctxBar').style.background = u.pct > 88 ? 'var(--danger)' : 'var(--accent)';
   const rem = Math.max(0, u.budget - u.used);
-  const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)));
-  $('#ctxText').textContent = '剩余 ' + fmt(rem) + ' · ' + (u.pct || 0) + '%';
+  const fmtW = (n) => (n >= 10000 ? (n / 10000).toFixed(1) + ' 万' : String(Math.round(n)));
+  $('#ctxText').textContent = '剩余 ' + fmtW(rem) + '字 · ' + (u.pct || 0) + '%';
   updateToggles();
 }
 
@@ -1349,6 +1350,7 @@ function renderConvList() {
 function convMenu(c) {
   openSheet(c.title || '新的对话', [
     { label: '重命名', onPick: () => renameConv(c) },
+    { label: '导出这个对话', onPick: () => exportConversation(c) },
     { label: '删除对话', danger: true, onPick: () => delConv(c) },
   ]);
 }
@@ -1604,18 +1606,35 @@ async function chatOnce(messages) {
    长上下文：滚动摘要
    ========================================================= */
 const SUMMARY_PROMPT =
-  '你在为用户整理一段长期对话的"记忆"。请把下面的对话压缩成结构化摘要，供以后继续聊天时作为背景。\n' +
+  '你在为一段很长的对话做「记忆压缩」。用户之后还会接着聊，所以这份摘要要让对话无缝接上。\n' +
   '要求：\n' +
-  '1. 用中文，第三人称，密度高，不寒暄。\n' +
-  '2. 必须保留：用户是谁、他的处境与目标、明确说过的偏好和忌讳、已经达成的结论与决定、未完成的事、关键事实与数字。\n' +
-  '3. 合并重复内容，丢弃具体措辞和无信息量的寒暄。\n' +
-  '4. 如果已有旧摘要，把新内容并入其中，不要丢失旧摘要里的要点。\n' +
-  '5. 直接输出摘要正文，不要解释你在做什么。控制在 800 字以内。';
+  '1. 用中文、第三人称、密度高、不寒暄。\n' +
+  '2. 把最重要的写最前面：用户的身份处境、明确说过的偏好与忌讳、已经拍板的决定、尚未完成的事、关键事实与数字、约定好的说法或格式。\n' +
+  '3. 时间感：越靠近现在的结论越重要；已被推翻的旧结论用一句「（已废弃）」带过，避免后续误解。\n' +
+  '4. 合并重复内容，丢掉寒暄和过程性废话。\n' +
+  '5. 已有旧摘要时，把新内容并进去，不要丢旧要点。\n' +
+  '6. 直接输出摘要正文，控制在 1200 字以内。';
 
-async function summarize(oldSummary, transcript) {
+/** 消息权重：越新越高，用户说的比助手说的更重要，带信号词的再加分 */
+function messageWeight(m, idx, total, now) {
+  const roleW = m.role === 'user' ? 1.0 : 0.55;
+  const recW = total <= 1 ? 1 : idx / (total - 1);
+  const ageDays = Math.max(0, (now - (m.ts || now)) / 86400000);
+  const timeW = Math.exp(-ageDays / 7);               // 7 天半衰，越近权重越高
+  const text = String(m.content || '');
+  let sig = 0;
+  if (/\d/.test(text)) sig += 0.15;
+  if (/(喜欢|讨厌|偏好|不要|必须|记住|以后|约定|决定|采用|方案是|改成)/.test(text)) sig += 0.45;
+  if (/[？?]\s*$/.test(text)) sig += 0.15;
+  sig += Math.min(0.3, text.length / 3000);
+  return 1.6 * recW + 1.0 * roleW + 1.2 * timeW + sig;
+}
+
+async function summarize(oldSummary, transcript, highlights) {
   const parts = [];
   if (oldSummary) parts.push('【已有记忆】\n' + oldSummary);
-  parts.push('【需要并入的新对话】\n' + transcript);
+  if (highlights) parts.push('【按权重挑出的高重要度片段】\n' + highlights);
+  parts.push('【需要并入的对话】\n' + transcript);
   parts.push('【输出】更新后的完整记忆摘要。');
   const txt = await chatOnce([
     { role: 'system', content: SUMMARY_PROMPT },
@@ -1624,43 +1643,93 @@ async function summarize(oldSummary, transcript) {
   return (txt || '').trim();
 }
 
+/**
+ * 压缩：把旧对话折成记忆 + 保留最近若干条，分叉出一个新会话「原名 副本」。
+ * 原会话一条都不删，只打上 forkedTo 标记。
+ */
 async function compact(conv, opts) {
   opts = opts || {};
-  const budget = Number(S.settings.budget) || DEFAULTS.budget;
+  const now = nowTs();
   const active = conv.messages.filter((m) => !m.archived && m.role !== 'system');
-  if (active.length < 6) return false;
+  if (active.length < 4) return null;
 
-  const keepTokens = Math.floor(budget * (opts.force ? 0.18 : 0.32));
+  // 1. 最近保留多少：约占阈值 12%，切在用户消息上
+  const limit = Number(S.settings.compactChars) || DEFAULTS.compactChars;
+  const keepChars = Math.max(2000, Math.floor(limit * (opts.force ? 0.06 : 0.12)));
   let acc = 0;
   let cut = active.length;
   for (let i = active.length - 1; i >= 0; i--) {
-    acc += estMsg(active[i]);
-    if (acc > keepTokens) { cut = i + 1; break; }
+    acc += String(active[i].content || '').length;
+    if (acc > keepChars) { cut = i + 1; break; }
     cut = i;
   }
   while (cut < active.length && active[cut].role !== 'user') cut++;
-  const toArchive = active.slice(0, cut);
-  if (toArchive.length < 2) return false;
+  const older = active.slice(0, cut);
+  const kept = active.slice(cut);
+  if (older.length < 2 || !kept.length) return null;
 
-  const transcript = toArchive
-    .map((m) => (m.role === 'user' ? '用户：' : '助手：') + String(m.content || '').slice(0, 4000))
-    .join('\n\n');
+  // 2. 按权重排序，挑出高重要度片段，要求摘要器重点保留
+  const weighted = older
+    .map((m, i) => ({ m, w: messageWeight(m, i, older.length, now) }))
+    .sort((a, b) => b.w - a.w);
+  const highlights = weighted.slice(0, 40).map((x) => {
+    const who = x.m.role === 'user' ? '用户' : '助手';
+    return '· [' + x.w.toFixed(2) + '] ' + who + '：' + String(x.m.content || '').trim().slice(0, 240);
+  }).join('\n');
 
-  const newSummary = await summarize(conv.summary, transcript);
-  if (!newSummary) return false;
-  conv.summary = newSummary;
-  for (const m of toArchive) m.archived = true;
-  conv.archivedCount = (conv.archivedCount || 0) + toArchive.length;
+  // 3. 转写并截断，控制请求体积
+  let transcript = older.map((m) => {
+    const who = m.role === 'user' ? '用户' : '助手';
+    const cap = m.role === 'user' ? 800 : 500;
+    return who + '：' + String(m.content || '').trim().slice(0, cap);
+  }).join('\n\n');
+  const MAX_TRANSCRIPT = 160000;
+  if (transcript.length > MAX_TRANSCRIPT) {
+    transcript = '（更早的部分已省略）\n\n' + transcript.slice(transcript.length - MAX_TRANSCRIPT);
+  }
+
+  const newSummary = await summarize(conv.summary, transcript, highlights);
+  if (!newSummary) return null;
+
+  // 4. 分叉出新副本，原会话保持原样
+  const copy = {
+    id: uid(),
+    title: (conv.title || '新的对话') + ' 副本',
+    createdAt: now,
+    updatedAt: now,
+    summary: newSummary,
+    archivedCount: 0,
+    messages: kept.map((m) => Object.assign({}, m, { archived: false })),
+    forkedFrom: conv.id,
+  };
+  conv.forkedTo = copy.id;
+  conv.summary = newSummary;          // 原对话也留一份记忆，回看时仍有背景
+  conv.archivedCount = older.length;
+
   await saveConv(conv);
-  return true;
+  await saveConv(copy);
+  S.convs.push(copy);
+  return copy;
 }
 
 async function maybeCompact(conv) {
   const u = usageOf(conv);
-  if (u.used < u.budget * 0.82) return;
+  if (u.used < u.budget) return;
   try {
-    if (await compact(conv)) { updateChrome(); renderMessages(); }
-  } catch (e) { console.warn('compact failed', e); }
+    toast('对话够长了，正在整理记忆…', 2600);
+    const copy = await compact(conv);
+    if (copy) {
+      S.current = copy;
+      await idbPut('meta', copy.id, 'currentId');
+      renderMessages();
+      updateChrome();
+      renderConvList();
+      toast('已生成「' + copy.title + '」继续聊，原对话完整保留', 3400);
+    }
+  } catch (e) {
+    console.warn('compact failed', e);
+    toast('整理记忆失败：' + (e.message || e), 3200);
+  }
 }
 
 /* =========================================================
@@ -1934,14 +2003,17 @@ async function runCompletion() {
     scrollBottom(false);
   };
 
+  const RATE = 20;   // 每秒显示多少字（约 20 字/秒，比之前慢一档）
+  const TICK = 50;   // 每 50ms 刷新一次
+
   const revealStep = () => {
     if (shownLen >= full.length) { revealing = false; return; }
     const lag = full.length - shownLen;
-    // 每帧至少 2 字；落后越多补得越快，保证总能追上
-    const step = Math.max(2, Math.ceil(lag / 12));
+    let step = (RATE * TICK) / 1000;              // 匀速，不再一大段一大段地蹦
+    if (lag > 1200) step = Math.ceil(lag / 10);   // 严重落后才加速，避免一直追不上
     shownLen = Math.min(full.length, shownLen + step);
     paint();
-    revealTimer = setTimeout(revealStep, full.length > 8000 ? 60 : 45);
+    revealTimer = setTimeout(revealStep, TICK);
   };
 
   const startReveal = () => {
@@ -2137,7 +2209,7 @@ function openSettings() {
   $('#fBaseUrl').value = S.settings.baseUrl || '';
   $('#fApiKey').value = S.settings.apiKey || '';
   $('#fModel').value = S.settings.model || '';
-  $('#fBudget').value = S.settings.budget || DEFAULTS.budget;
+  $('#fChars').value = S.settings.compactChars || DEFAULTS.compactChars;
   $('#fSystem').value = S.settings.system || '';
   $('#fTemp').value = S.settings.temperature;
   $('#tempVal').textContent = Number(S.settings.temperature).toFixed(1);
@@ -2154,7 +2226,7 @@ function saveSettingsFromForm() {
   S.settings.baseUrl = $('#fBaseUrl').value.trim() || DEFAULTS.baseUrl;
   S.settings.apiKey = $('#fApiKey').value.trim();
   S.settings.model = $('#fModel').value.trim() || DEFAULTS.model;
-  S.settings.budget = Math.max(4000, parseInt($('#fBudget').value, 10) || DEFAULTS.budget);
+  S.settings.compactChars = Math.max(10000, parseInt($('#fChars').value, 10) || DEFAULTS.compactChars);
   S.settings.system = $('#fSystem').value;
   S.settings.temperature = parseFloat($('#fTemp').value);
   if ($('#fRichLayout')) S.settings.richLayout = !!$('#fRichLayout').checked;
@@ -2176,6 +2248,64 @@ function exportAll() {
   a.download = 'koudai-' + new Date().toISOString().slice(0, 10) + '.json';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ---------- 导出单个对话（Markdown，角色分明） ---------- */
+function pad2(n) { return String(n).padStart(2, '0'); }
+function stampOf(ts) {
+  const d = new Date(ts || Date.now());
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+    ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+
+function downloadFile(name, text, mime) {
+  const blob = new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function exportConversation(c) {
+  if (!c) return;
+  const L = [];
+  L.push('# ' + (c.title || '对话'));
+  L.push('');
+  L.push('- 导出时间：' + stampOf(nowTs()));
+  L.push('- 消息数量：' + c.messages.length + ' 条');
+  if (c.forkedFrom) L.push('- 说明：由更早的长对话压缩而来');
+  if (c.summary) {
+    L.push('');
+    L.push('## 记忆摘要（较早内容的压缩）');
+    L.push('');
+    L.push(c.summary);
+  }
+  L.push('');
+  L.push('---');
+
+  c.messages.forEach((m, i) => {
+    const isUser = m.role === 'user';
+    L.push('');
+    L.push('## ' + (i + 1) + ' · ' + (isUser ? '🧑 用户' : '🤖 AI') + '　' + stampOf(m.ts));
+    L.push('');
+    if (!isUser && m.reasoning) {
+      L.push('> 💭 深度思考（模型内部推理）：');
+      L.push('>');
+      L.push(String(m.reasoning).split('\n').map((x) => '> ' + x).join('\n'));
+      L.push('');
+    }
+    if (m.atts && m.atts.length) {
+      L.push('📎 附件：' + m.atts.map((a) => a.name || '文件').join('、'));
+      L.push('');
+    }
+    L.push(String(m.content || '（无文字内容）'));
+  });
+
+  const safe = String(c.title || '对话').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+  const tail = stampOf(nowTs()).replace(/[: ]/g, '-');
+  downloadFile(safe + '-' + tail + '.md', L.join('\n'), 'text/markdown');
+  toast('已导出这个对话');
 }
 
 async function importFile(file) {
@@ -2279,13 +2409,19 @@ $('#sheetCancel').addEventListener('click', closeSheet);
 
 $('#btnCompactNow').addEventListener('click', async () => {
   const out = $('#testout');
-  out.textContent = '正在压缩…';
+  out.textContent = '正在整理记忆…';
   try {
-    const ok = await compact(S.current, { force: true });
-    out.textContent = ok ? '压缩完成，' + (S.current.archivedCount || 0) + ' 条早期内容已并入记忆。' : '当前会话还太短，不需要压缩。';
-    renderMessages(); updateChrome();
+    const copy = await compact(S.current, { force: true });
+    if (!copy) {
+      out.textContent = '当前会话还太短，不需要整理。';
+      return;
+    }
+    S.current = copy;
+    await idbPut('meta', copy.id, 'currentId');
+    renderMessages(); updateChrome(); renderConvList();
+    out.textContent = '已生成「' + copy.title + '」，原对话完整保留。';
   } catch (e) {
-    out.innerHTML = '<span style="color:var(--danger)">压缩失败：' + esc(e.message) + '</span>';
+    out.innerHTML = '<span style="color:var(--danger)">整理失败：' + esc(e.message) + '</span>';
   }
 });
 $('#btnExport').addEventListener('click', exportAll);

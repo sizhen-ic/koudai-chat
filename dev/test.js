@@ -89,7 +89,7 @@ setTimeout(async () => {
   ok('标题渲染', byId('convTitle').textContent === '新的对话', byId('convTitle').textContent);
   ok('模型标签渲染', byId('modelName').textContent === 'deepseek-flash', byId('modelName').textContent);
   ok('降级 localStorage 已写入', store.size > 0, [...store.keys()].join(','));
-  ok('剩余量文案', /剩余\s[\d.]+k/.test(byId('ctxText').textContent), byId('ctxText').textContent);
+  ok('剩余字符文案', /剩余\s[\d.]+\s?万字?/.test(byId('ctxText').textContent), byId('ctxText').textContent);
 
   /* Markdown */
   ok('md 粗体', K.md('**粗体**').includes('<strong>粗体</strong>'), K.md('**粗体**'));
@@ -132,26 +132,28 @@ setTimeout(async () => {
   ok('分组：昨天', K.relGroup(now - 86400000 * 1.2) === '昨天', K.relGroup(now - 86400000 * 1.2));
   ok('分组：最近 7 天', K.relGroup(now - 86400000 * 4) === '最近 7 天', K.relGroup(now - 86400000 * 4));
 
-  /* 压缩 */
-  const c2 = { id: 't', summary: '', archivedCount: 0, messages: [], title: 't' };
+  /* 压缩：按权重挑选 + 分叉新副本，原文一条不删 */
+  const c2 = { id: 't', summary: '', archivedCount: 0, messages: [], title: '测试对话' };
   for (let i = 0; i < 40; i++) {
-    c2.messages.push({ role: 'user', content: '第' + i + '轮问题，' + '内容'.repeat(200) });
-    c2.messages.push({ role: 'assistant', content: '第' + i + '轮回答，' + '内容'.repeat(200) });
+    c2.messages.push({ role: 'user', content: '第' + i + '轮问题，' + '内容'.repeat(200), ts: Date.now() - (40 - i) * 3600000 });
+    c2.messages.push({ role: 'assistant', content: '第' + i + '轮回答，' + '内容'.repeat(200), ts: Date.now() - (40 - i) * 3600000 });
   }
-  K.S.settings.budget = 8000;
-  const before = c2.messages.filter((m) => !m.archived).length;
+  c2.messages.push({ role: 'user', content: '记住：以后都用中文回答', ts: Date.now() });
+  K.S.settings.compactChars = 20000;
   ctx.fetch = () => Promise.resolve({
     ok: true, status: 200,
     json: () => Promise.resolve({ choices: [{ message: { content: '【记忆】摘要内容' } }] }),
   });
-  let okc = false, err = null;
-  try { okc = await K.compact(c2); } catch (e) { err = e; }
-  const after = c2.messages.filter((m) => !m.archived).length;
-  ok('压缩执行成功', okc === true, err ? String(err) : '');
-  ok('原文完整保留（80 条）', c2.messages.length === 80, 'len=' + c2.messages.length);
-  ok('活跃消息减少', after < before, before + ' → ' + after);
-  ok('摘要写入', /摘要内容/.test(c2.summary));
-  ok('切点落在 user', c2.messages.filter((m) => !m.archived)[0].role === 'user');
+  let copy = null, err = null;
+  try { copy = await K.compact(c2); } catch (e) { err = e; }
+  ok('压缩成功并返回新副本', !!copy, err ? String(err) : '');
+  ok('原对话一条不删（81 条）', c2.messages.length === 81, 'len=' + c2.messages.length);
+  ok('原对话没有被标记归档', c2.messages.every((m) => !m.archived));
+  ok('副本标题 = 原名 + 副本', !!copy && copy.title === '测试对话 副本', copy && copy.title);
+  ok('副本带记忆摘要', !!copy && /摘要内容/.test(copy.summary));
+  ok('副本只保留近期消息', !!copy && copy.messages.length > 0 && copy.messages.length < 81, copy && ('len=' + copy.messages.length));
+  ok('原对话记录了分叉去向', c2.forkedTo === (copy && copy.id));
+  ok('切点落在 user', !copy || !copy.messages.length || copy.messages[0].role === 'user');
 
   console.log(results.join('\n'));
   const fails = results.filter((r) => r.startsWith('FAIL'));
