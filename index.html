@@ -1275,6 +1275,10 @@ function renderMessages() {
 
 /** 是否贴着底部（留一点容差，手指没那么准） */
 let scrollPinned = true;
+/** 用户一碰就让出控制权，直到他自己滑回底部才恢复 */
+let followPaused = false;
+/** 自己触发的滚动，别被当成用户操作 */
+let selfScrollUntil = 0;
 
 const scroller = () => msgEl();
 
@@ -1285,12 +1289,15 @@ function isAtBottom() {
 
 /**
  * force=true：强制回到底部并重新跟随
- * 否则：只在用户没有主动上滑时才跟随，避免生成时跟手指抢滚动
+ * 用户正在滑动时一律不动，避免跟手指抢方向
  */
 function scrollBottom(force) {
   const s = scroller();
-  if (force) scrollPinned = true;
-  if (force || scrollPinned) s.scrollTop = s.scrollHeight;
+  if (force) { scrollPinned = true; followPaused = false; }
+  if (!followPaused && (force || scrollPinned)) {
+    selfScrollUntil = Date.now() + 150;
+    s.scrollTop = s.scrollHeight;
+  }
   $('#gobottom').classList.toggle('show', !isAtBottom());
 }
 
@@ -2002,25 +2009,46 @@ async function runCompletion() {
   let reasoning = '';
   let failed = null;
 
-  // 打字机：文字逐字浮现（官方那种节奏）；积压多时自动加速，长回答也不会拖太久
+  // 打字机：文字逐字浮现（官方那种节奏）。速度随积压量线性提升，但绝不一次性倾倒
   let shownLen = 0;
   let revealTimer = 0;
   let revealing = false;
+  let revealDone = null;
+  let aborted = false;
+
+  // 内容还没铺满一屏时继续跟到底；铺满之后就停住，让用户从开头读
+  const shouldFollow = () => {
+    const box = msgEl();
+    if (!box || !body) return true;
+    const visible = box.clientHeight || 0;
+    const h = body.offsetHeight || 0;
+    return h <= visible - 32;
+  };
 
   const paint = () => {
     body.innerHTML = md(full.slice(0, shownLen)) + '<span class="cursor"></span>';
-    scrollBottom(false);
+    if (shouldFollow()) {
+      scrollBottom(false);
+    } else {
+      // 已经铺满一屏：停在原地不动，只更新"回到底部"按钮
+      $('#gobottom').classList.toggle('show', !isAtBottom());
+    }
   };
 
-  const RATE = 20;   // 每秒显示多少字（约 20 字/秒，比之前慢一档）
-  const TICK = 50;   // 每 50ms 刷新一次
+  const RATE = 26;      // 基准：每秒 26 字
+  const MAX_RATE = 120; // 追赶上限：每秒 120 字
+  const TICK = 40;
 
   const revealStep = () => {
-    if (shownLen >= full.length) { revealing = false; return; }
+    if (shownLen >= full.length) {
+      revealing = false;
+      if (revealDone) { const done = revealDone; revealDone = null; done(); }
+      return;
+    }
     const lag = full.length - shownLen;
-    let step = (RATE * TICK) / 1000;              // 匀速，不再一大段一大段地蹦
-    if (lag > 1200) step = Math.ceil(lag / 10);   // 严重落后才加速，避免一直追不上
-    shownLen = Math.min(full.length, shownLen + step);
+    // 积压越多吐得越快，但封顶，避免"憋一会然后哗啦全出来"
+    const perSec = Math.min(MAX_RATE, RATE + lag / 12);
+    shownLen = Math.min(full.length, shownLen + (perSec * TICK) / 1000);
     paint();
     revealTimer = setTimeout(revealStep, TICK);
   };
@@ -2029,6 +2057,14 @@ async function runCompletion() {
     if (revealing) return;
     revealing = true;
     revealStep();
+  };
+
+  // 新消息进来时，把上一条还没吐完的动画收掉，避免两套循环打架
+  if (typeof S.cancelReveal === 'function') S.cancelReveal();
+  S.cancelReveal = () => {
+    clearTimeout(revealTimer);
+    revealing = false;
+    if (revealDone) { const done = revealDone; revealDone = null; done(); }
   };
 
   try {
@@ -2052,7 +2088,7 @@ async function runCompletion() {
       }
     );
   } catch (e) {
-    if (e && e.name === 'AbortError') { /* 用户主动停止 */ }
+    if (e && e.name === 'AbortError') { aborted = true; }
     else if (e && e.isNetwork) failed = netHint();
     else if (e instanceof ApiError) failed = '接口报错（' + e.status + '）：<br>' + esc(String(e.message).slice(0, 400));
     else failed = '出错了：' + esc(String((e && e.message) || e));
@@ -2060,14 +2096,35 @@ async function runCompletion() {
 
   S.streaming = null;
   setStreaming(false);
-  clearTimeout(revealTimer);
   finishThink();
+
+  // 收尾：先把积压的字用同样的节奏吐完，再落定；用户中途停止则立刻补全
+  if (full && shownLen < full.length) {
+    if (aborted) {
+      clearTimeout(revealTimer);
+      revealing = false;
+      shownLen = full.length;
+      paint();
+    } else {
+      if (!revealing) startReveal();
+      // 最多等 8 秒，防止极端情况下动画卡住把整个流程挂死
+      await Promise.race([
+        new Promise((resolve) => { revealDone = resolve; }),
+        new Promise((resolve) => setTimeout(resolve, 8000)),
+      ]);
+    }
+  }
+  clearTimeout(revealTimer);
+  S.cancelReveal = null;
 
   if (failed) {
     body.innerHTML = '<span style="color:var(--danger)">' + failed + '</span>';
   } else if (!full) {
     body.innerHTML = '<span style="color:var(--fg3)">（没有返回内容）</span>';
   }
+
+  // 重新渲染之前先判断：要不要跟到底（渲染完 body 就失效了）
+  const followAtEnd = shouldFollow();
 
   if (full) {
     conv.messages.push({
@@ -2087,7 +2144,8 @@ async function runCompletion() {
   renderConvList();
   await maybeCompact(conv);
   updateChrome();
-  scrollBottom(true);
+  // 只有内容没超过一屏时才跳到底部；超过就停在开头，别把用户刚看的页面顶走
+  if (followAtEnd) scrollBottom(true);
   refreshBalance(false);
 }
 
@@ -2484,12 +2542,16 @@ $('#gobottom').addEventListener('click', () => {
 });
 
 msgEl().addEventListener('scroll', () => {
-  if (isAtBottom()) scrollPinned = true;
+  if (Date.now() < selfScrollUntil) return;      // 程序自己滚的，不算用户操作
+  if (isAtBottom()) { scrollPinned = true; followPaused = false; }
   $('#gobottom').classList.toggle('show', !isAtBottom());
 }, { passive: true });
 
-// 手指一碰就让出滚动控制权，生成中也能自由上下翻
-msgEl().addEventListener('touchstart', () => { scrollPinned = false; }, { passive: true });
+// 手指一碰立刻交出控制权；松手后如果停在底部，才恢复跟随
+msgEl().addEventListener('touchstart', () => { followPaused = true; }, { passive: true });
+msgEl().addEventListener('touchend', () => {
+  setTimeout(() => { if (isAtBottom()) followPaused = false; }, 350);
+}, { passive: true });
 
 /* =========================================================
    内容层弹性：只位移 #msginner 一个元素
