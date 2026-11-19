@@ -30,7 +30,7 @@ const byId = (id) => { if (!els.has(id)) els.set(id, el('#' + id)); return els.g
 /* 假的 App 存储：模拟 files/data/state.json */
 let disk = JSON.stringify({
   version: 1,
-  convs: { c9: { id: 'c9', title: '来自手机文件', createdAt: 1, updatedAt: 1, summary: '', archivedCount: 0, messages: [] } },
+  convs: { c9: { id: 'c9', title: '来自手机文件', createdAt: 1, updatedAt: 1, summary: '', archivedCount: 0, messages: [{ role: 'user', content: '你好', ts: 1 }] } },
   meta: { settings: { apiKey: 'sk-native', model: 'deepseek-flash', budget: 32000, baseUrl: 'https://api.deepseek.com', temperature: 0.7, system: 'x' }, currentId: 'c9' },
 });
 const calls = [];

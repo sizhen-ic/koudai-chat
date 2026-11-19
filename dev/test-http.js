@@ -29,7 +29,11 @@ const byId = (id) => { if (!els.has(id)) els.set(id, el('#' + id)); return els.g
 
 const store = new Map();
 const calls = [];
-let serverState = { version: 1, convs: {}, meta: {} };
+let serverState = {
+  version: 1,
+  convs: { c1: { id: 'c1', title: '服务端会话', createdAt: 1, updatedAt: 1, summary: '', archivedCount: 0, messages: [{ role: 'user', content: '你好', ts: 1 }] } },
+  meta: {},
+};
 
 function fakeFetch(url, opts = {}) {
   const u = String(url);

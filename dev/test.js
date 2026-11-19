@@ -10,7 +10,7 @@ const END = '/*__APP_JS_END__*/';
 const i1 = HTML.indexOf(START);
 const i2 = HTML.indexOf(END);
 let src = HTML.slice(i1 + START.length, i2);
-src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { estTokens, md, usageOf, buildRequestMessages, compact, relGroup, downloadFile, S, DEFAULTS };})();');
+src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { estTokens, md, usageOf, buildRequestMessages, compact, relGroup, downloadFile, saveConv, newConv, S, DEFAULTS };})();');
 
 /* ---------- 断言 ---------- */
 const results = [];
@@ -86,11 +86,20 @@ setTimeout(async () => {
   const K = ctx.__KD;
   if (!K) { results.push('FAIL  内部函数未导出'); console.log(results.join('\n')); process.exit(1); }
 
-  ok('启动创建了会话', K.S.convs.length === 1, 'convs=' + K.S.convs.length);
+  ok('启动进入草稿态（不落盘空会话）', !!K.S.current && K.S.convs.length === 0, 'convs=' + K.S.convs.length);
   ok('标题渲染', byId('convTitle').textContent === '新的对话', byId('convTitle').textContent);
   ok('模型标签渲染', byId('modelName').textContent === 'deepseek-flash', byId('modelName').textContent);
-  ok('降级 localStorage 已写入', store.size > 0, [...store.keys()].join(','));
   ok('剩余字符文案', /剩余\s[\d.]+\s?万字?/.test(byId('ctxText').textContent), byId('ctxText').textContent);
+
+  /* 空对话不入库，有内容才入库 */
+  const draft = K.newConv();
+  await K.saveConv(draft);
+  ok('空对话不入库', K.S.convs.every((c) => c.id !== draft.id));
+  const real = K.newConv();
+  real.messages.push({ role: 'user', content: '你好', ts: Date.now() });
+  await K.saveConv(real);
+  ok('有消息才入库', K.S.convs.some((c) => c.id === real.id), 'convs=' + K.S.convs.length);
+  ok('降级 localStorage 已写入', store.size > 0, [...store.keys()].join(','));
 
   /* Markdown */
   ok('md 粗体', K.md('**粗体**').includes('<strong>粗体</strong>'), K.md('**粗体**'));

@@ -1122,21 +1122,32 @@ async function loadAll() {
     await saveSettings();
   }
 
-  S.convs = await idbAll('convs');
+  S.convs = (await idbAll('convs')).filter((c) => c && c.messages && c.messages.length);
+  // 清掉以前留下的空对话（点了"新对话"但一句话没发的）
+  const emptyOnes = (await idbAll('convs')).filter((c) => c && (!c.messages || !c.messages.length));
+  for (const e of emptyOnes) { try { await idbDel('convs', e.id); } catch (err) { /* 忽略 */ } }
+
   const saved = await idbGet('meta', 'models');
   if (Array.isArray(saved) && saved.length) S.models = saved;
   const curId = await idbGet('meta', 'currentId');
   S.current = S.convs.find((c) => c.id === curId) || S.convs[0] || null;
-  if (!S.current) { S.current = newConv(); S.convs.push(S.current); await idbPut('convs', S.current); }
-  await idbPut('meta', S.current.id, 'currentId');
+  // 没有会话时只建一个"草稿"，发出第一条消息才会真正入库
+  if (!S.current) S.current = newConv();
 }
 
 async function saveConv(c) {
   if (!c) return;
+  // 一句话都没说过的对话不入库，避免点一次"新对话"就多出一条空记录
+  const hasContent = (c.messages && c.messages.length > 0) || (c.summary && c.summary.trim());
+  if (!hasContent) return;
   c.updatedAt = nowTs();
   await idbPut('convs', c);
   const i = S.convs.findIndex((x) => x.id === c.id);
   if (i >= 0) S.convs[i] = c; else S.convs.push(c);
+  // 草稿第一次落库时顺便记住"当前会话"，重启后能回到它
+  if (S.current && S.current.id === c.id) {
+    try { await idbPut('meta', c.id, 'currentId'); } catch (e) { /* 忽略 */ }
+  }
 }
 const saveSettings = () => idbPut('meta', S.settings, 'settings');
 
@@ -1381,14 +1392,17 @@ async function renameConv(c) {
 }
 
 async function delConv(c) {
-  if (S.convs.length <= 1) { toast('至少留一个会话'); return; }
   const sure = await askConfirm('删除对话', '「' + (c.title || '新的对话') + '」删除后不可恢复。', '删除');
   if (!sure) return;
   await idbDel('convs', c.id);
   S.convs = S.convs.filter((x) => x.id !== c.id);
-  if (S.current.id === c.id) {
-    S.current = S.convs[0];
-    await idbPut('meta', S.current.id, 'currentId');
+  if (!S.current || S.current.id === c.id) {
+    if (S.convs.length) {
+      S.current = S.convs[0];
+      await idbPut('meta', S.current.id, 'currentId');
+    } else {
+      S.current = newConv();   // 删光了就停在草稿态，再发消息才会重新入库
+    }
   }
   renderConvList(); renderMessages(); updateChrome();
 }
@@ -1404,11 +1418,8 @@ async function switchConv(id) {
 
 async function newConversation() {
   if (S.streaming) { toast('正在回答，先停下'); return; }
-  const c = newConv();
-  S.convs.push(c);
-  await idbPut('convs', c);
-  S.current = c;
-  await idbPut('meta', c.id, 'currentId');
+  // 只在内存里建一个草稿：发出第一条消息时才写进列表
+  S.current = newConv();
   renderMessages(); updateChrome(); renderConvList(); closeDrawer();
   $('#input').focus();
 }
