@@ -125,7 +125,7 @@ setTimeout(async () => {
   const msgs = K.buildRequestMessages(conv);
   ok('archived 被排除', !msgs.some((m) => m.content === '早期问题'));
   ok('摘要以 system 注入', msgs.some((m) => m.role === 'system' && m.content.includes('小明')));
-  ok('近期消息保留', msgs.some((m) => m.content === '现在的问题'));
+  ok('近期消息保留', msgs.some((m) => String(m.content).includes('现在的问题')));
 
   /* 会话分组 */
   const now = Date.now();
@@ -166,7 +166,7 @@ setTimeout(async () => {
   ok('导出文件名与内容正确', !!saved && saved.name === '测试-2026.md' && saved.text === '# 内容', saved && saved.mime);
   delete ctx.window.KoudaiNative;
 
-  /* 当前时间必须传给模型（只有最后一条用户消息带，别把历史也污染了） */
+  /* 当前时间拼进最后一条用户消息（不改消息序列，接口才不会拒收） */
   const tc = {
     id: 't', summary: '',
     messages: [
@@ -176,14 +176,16 @@ setTimeout(async () => {
     ],
   };
   K.S.settings.reminder = true;
-  const withReminder = K.buildRequestMessages(tc).filter((m) => m.role === 'latest_reminder');
-  const lastR = withReminder[withReminder.length - 1];
-  ok('最后一条提醒带当前时间', !!lastR && /现在的时间是 \d{4} 年/.test(lastR.content), lastR && lastR.content.split('\n').pop().slice(0, 40));
-  ok('历史提醒不带时间', withReminder.slice(0, -1).every((m) => !/现在的时间是/.test(m.content)));
+  const built = K.buildRequestMessages(tc);
+  const users = built.filter((m) => m.role === 'user');
+  ok('最后一条用户消息带当前时间', /【当前时间】\d{4} 年/.test(users[users.length - 1].content), String(users[users.length - 1].content).slice(0, 40));
+  ok('历史用户消息不带时间', !/【当前时间】/.test(users[0].content));
+  ok('没有新增 latest_reminder 数量', built.filter((m) => m.role === 'latest_reminder').length === 2, 'len=' + built.filter((m) => m.role === 'latest_reminder').length);
 
   K.S.settings.reminder = false;
-  const offMsgs = K.buildRequestMessages(tc).filter((m) => m.role === 'latest_reminder');
-  ok('关掉提醒也照样告诉时间', offMsgs.length === 1 && /现在的时间是/.test(offMsgs[0].content), 'len=' + offMsgs.length);
+  const built2 = K.buildRequestMessages(tc);
+  const users2 = built2.filter((m) => m.role === 'user');
+  ok('关掉提醒也照样告诉时间', built2.filter((m) => m.role === 'latest_reminder').length === 0 && /【当前时间】/.test(users2[users2.length - 1].content));
   K.S.settings.reminder = true;
 
   console.log(results.join('\n'));

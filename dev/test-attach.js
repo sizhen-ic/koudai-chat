@@ -83,7 +83,7 @@ setTimeout(() => {
   const fileBlocks = (withText ? withText.content : []).filter((b) => b.type === 'file');
   ok('数组里有 file 块并带 file_id', fileBlocks.length === 1 && fileBlocks[0].file_id === 'file-api-1', JSON.stringify(fileBlocks));
   const onlyAtt = msgs.filter((m) => Array.isArray(m.content)).pop();
-  ok('纯附件消息不含空 text 块', onlyAtt && onlyAtt.content.every((b) => b.type !== 'text'), JSON.stringify(onlyAtt && onlyAtt.content));
+  ok('纯附件消息不含空 text 块', onlyAtt && onlyAtt.content.every((b) => b.type !== 'text' || (b.text && b.text.trim().length > 0)), JSON.stringify(onlyAtt && onlyAtt.content));
 
   /* ---- 思考 / 联网参数 ---- */
   K.S.settings.think = false; K.S.settings.web = false;

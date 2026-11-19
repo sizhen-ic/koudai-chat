@@ -1545,14 +1545,6 @@ function timeLine() {
     ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + '（' + tz + '）';
 }
 
-/** 组装一条 latest_reminder；最后一条用户消息额外带上当前时间 */
-function reminderFor(isLastUser) {
-  const parts = [];
-  if (S.settings.reminder) parts.push(reminderLine());
-  if (isLastUser) parts.push('现在的时间是 ' + timeLine() + '。回答涉及日期、时间、时效性内容时以此为准。');
-  return parts.join('\n');
-}
-
 function buildChatBody(messages) {
   const body = { model: S.settings.model, messages, stream: true };
   if (S.settings.think) {
@@ -1922,14 +1914,10 @@ function buildRequestMessages(conv) {
   for (let i = active.length - 1; i >= 0; i--) {
     if (active[i].role === 'user') { lastUser = i; break; }
   }
+  // 时间只加在最后一条用户消息上，拼进正文——不改消息序列，避免接口拒收
+  const stamp = '【当前时间】' + timeLine() + '。\n\n';
 
   active.forEach((m, idx) => {
-    const isLastUser = idx === lastUser;
-    const pushReminder = () => {
-      const txt = reminderFor(isLastUser);
-      if (txt) msgs.push({ role: 'latest_reminder', content: txt });
-    };
-
     if (m.role === 'assistant') {
       const a = { role: 'assistant', content: m.content || '' };
       // 带 tools 的请求必须回传 reasoning_content，否则接口报 400
@@ -1938,22 +1926,25 @@ function buildRequestMessages(conv) {
       return;
     }
 
+    const head = idx === lastUser ? stamp : '';
+
     if (m.atts && m.atts.length) {
       const blocks = [];
-      if (m.content) blocks.push({ type: 'text', text: m.content });
+      if (m.content) blocks.push({ type: 'text', text: head + m.content });
+      else if (head) blocks.push({ type: 'text', text: head.trim() });
       for (const at of m.atts) {
         if (at.fileId) blocks.push({ type: 'file', file_id: at.fileId });
       }
       if (blocks.length) {
-        pushReminder();
+        if (S.settings.reminder) msgs.push({ role: 'latest_reminder', content: reminderLine() });
         msgs.push({ role: 'user', content: blocks });
         return;
       }
     }
 
     if (!m.content) return;
-    pushReminder();
-    msgs.push({ role: 'user', content: m.content });
+    if (S.settings.reminder) msgs.push({ role: 'latest_reminder', content: reminderLine() });
+    msgs.push({ role: 'user', content: head + m.content });
   });
   return msgs;
 }
@@ -2165,7 +2156,7 @@ async function runCompletion() {
     });
     await saveConv(conv);
     renderMessages();
-  } else {
+  } else if (!failed) {
     row.remove();
   }
 
