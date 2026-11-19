@@ -166,6 +166,26 @@ setTimeout(async () => {
   ok('导出文件名与内容正确', !!saved && saved.name === '测试-2026.md' && saved.text === '# 内容', saved && saved.mime);
   delete ctx.window.KoudaiNative;
 
+  /* 当前时间必须传给模型（只有最后一条用户消息带，别把历史也污染了） */
+  const tc = {
+    id: 't', summary: '',
+    messages: [
+      { role: 'user', content: '现在几点', ts: Date.now() },
+      { role: 'assistant', content: '……', ts: Date.now() },
+      { role: 'user', content: '再说一次', ts: Date.now() },
+    ],
+  };
+  K.S.settings.reminder = true;
+  const withReminder = K.buildRequestMessages(tc).filter((m) => m.role === 'latest_reminder');
+  const lastR = withReminder[withReminder.length - 1];
+  ok('最后一条提醒带当前时间', !!lastR && /现在的时间是 \d{4} 年/.test(lastR.content), lastR && lastR.content.split('\n').pop().slice(0, 40));
+  ok('历史提醒不带时间', withReminder.slice(0, -1).every((m) => !/现在的时间是/.test(m.content)));
+
+  K.S.settings.reminder = false;
+  const offMsgs = K.buildRequestMessages(tc).filter((m) => m.role === 'latest_reminder');
+  ok('关掉提醒也照样告诉时间', offMsgs.length === 1 && /现在的时间是/.test(offMsgs[0].content), 'len=' + offMsgs.length);
+  K.S.settings.reminder = true;
+
   console.log(results.join('\n'));
   const fails = results.filter((r) => r.startsWith('FAIL'));
   console.log('\n' + (results.length - fails.length) + '/' + results.length + ' PASS');

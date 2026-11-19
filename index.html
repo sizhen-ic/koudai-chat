@@ -1534,6 +1534,25 @@ function reminderLine() {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ',' + wd + ',' + loc + ',App,中文';
 }
 
+/** 给模型一句人话的时间：带上时和分，模型才知道"现在几点" */
+function timeLine() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const wd = '星期' + '日一二三四五六'[d.getDay()];
+  const off = -d.getTimezoneOffset() / 60;
+  const tz = 'UTC' + (off >= 0 ? '+' : '') + off;
+  return d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 ' + wd +
+    ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + '（' + tz + '）';
+}
+
+/** 组装一条 latest_reminder；最后一条用户消息额外带上当前时间 */
+function reminderFor(isLastUser) {
+  const parts = [];
+  if (S.settings.reminder) parts.push(reminderLine());
+  if (isLastUser) parts.push('现在的时间是 ' + timeLine() + '。回答涉及日期、时间、时效性内容时以此为准。');
+  return parts.join('\n');
+}
+
 function buildChatBody(messages) {
   const body = { model: S.settings.model, messages, stream: true };
   if (S.settings.think) {
@@ -1897,16 +1916,26 @@ function buildRequestMessages(conv) {
   if (conv.summary) {
     msgs.push({ role: 'system', content: '以下是这段对话较早部分的记忆摘要，请把它当作你已经知道的事实继续对话：\n\n' + conv.summary });
   }
-  for (const m of conv.messages) {
-    if (m.archived) continue;
-    if (m.role !== 'user' && m.role !== 'assistant') continue;
+
+  const active = conv.messages.filter((m) => !m.archived && (m.role === 'user' || m.role === 'assistant'));
+  let lastUser = -1;
+  for (let i = active.length - 1; i >= 0; i--) {
+    if (active[i].role === 'user') { lastUser = i; break; }
+  }
+
+  active.forEach((m, idx) => {
+    const isLastUser = idx === lastUser;
+    const pushReminder = () => {
+      const txt = reminderFor(isLastUser);
+      if (txt) msgs.push({ role: 'latest_reminder', content: txt });
+    };
 
     if (m.role === 'assistant') {
       const a = { role: 'assistant', content: m.content || '' };
       // 带 tools 的请求必须回传 reasoning_content，否则接口报 400
       if (m.reasoning) a.reasoning_content = m.reasoning;
       if (m.content) msgs.push(a);
-      continue;
+      return;
     }
 
     if (m.atts && m.atts.length) {
@@ -1916,16 +1945,16 @@ function buildRequestMessages(conv) {
         if (at.fileId) blocks.push({ type: 'file', file_id: at.fileId });
       }
       if (blocks.length) {
-        if (S.settings.reminder) msgs.push({ role: 'latest_reminder', content: reminderLine() });
+        pushReminder();
         msgs.push({ role: 'user', content: blocks });
-        continue;
+        return;
       }
     }
 
-    if (!m.content) continue;
-    if (S.settings.reminder) msgs.push({ role: 'latest_reminder', content: reminderLine() });
+    if (!m.content) return;
+    pushReminder();
     msgs.push({ role: 'user', content: m.content });
-  }
+  });
   return msgs;
 }
 
@@ -2035,9 +2064,9 @@ async function runCompletion() {
     }
   };
 
-  const RATE = 26;      // 基准：每秒 26 字
-  const MAX_RATE = 120; // 追赶上限：每秒 120 字
-  const TICK = 40;
+  const RATE = 48;      // 基准：每秒 48 字（贴合模型吐字速度）
+  const MAX_RATE = 320; // 追赶上限：每秒 320 字
+  const TICK = 32;
 
   const revealStep = () => {
     if (shownLen >= full.length) {
@@ -2047,7 +2076,7 @@ async function runCompletion() {
     }
     const lag = full.length - shownLen;
     // 积压越多吐得越快，但封顶，避免"憋一会然后哗啦全出来"
-    const perSec = Math.min(MAX_RATE, RATE + lag / 12);
+    const perSec = Math.min(MAX_RATE, RATE + lag / 6);
     shownLen = Math.min(full.length, shownLen + (perSec * TICK) / 1000);
     paint();
     revealTimer = setTimeout(revealStep, TICK);
