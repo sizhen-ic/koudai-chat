@@ -290,6 +290,7 @@ body{font-size:16px;line-height:1.85;font-weight:400;overscroll-behavior:auto;
 .turn.assistant .actbar{display:flex;opacity:.5;transition:opacity .15s}
 .turn.assistant.sel .actbar{opacity:1}
 .actbar button svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;display:block}
+.actbar button.speaking{color:var(--accent)}
 .actbar button{padding:5px 8px}
 
 /* 思考过程：官方那种「已思考（用时 N 秒）」+ 缩进层级 */
@@ -652,6 +653,13 @@ header{
       </div>
       <input type="file" id="bgPick" accept="image/*" style="display:none">
       <div class="hint">图片会压到手机尺寸后存在本机，不占对话数据。</div>
+    </div>
+
+    <div class="section">语音</div>
+    <div class="field">
+      <label>朗读语速 <span id="ttsRateVal" style="color:var(--fg3)"></span></label>
+      <input type="range" id="fTtsRate" min="0.6" max="1.8" step="0.1">
+      <div class="hint" id="ttsHint">点消息下方的喇叭图标即可朗读。</div>
     </div>
 
     <div class="section">数据</div>
@@ -1111,6 +1119,7 @@ const DEFAULTS = {
   reminder: true,
   bgBright: 0.84,
   bgDim: 0.10,
+  ttsRate: 1,
   v: 4,
   system: '',
 };
@@ -1263,11 +1272,13 @@ function makeTurn(m, index, total) {
     copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15.5V6a2 2 0 0 1 2-2h9.5"/></svg>',
     regen: '<svg viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6"/><path d="M20.5 4.5V11h-6.2"/></svg>',
     del: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.5 7V5.2h5V7"/><path d="M6.5 7l.9 12.2h9.2L17.5 7"/></svg>',
+    speak: TTS_ICONS.speak,
   };
   if (m.role === 'user') {
     bar.innerHTML = '<button data-act="copy">复制</button><button data-act="edit">编辑</button><button data-act="del">删除</button>';
   } else {
     bar.innerHTML =
+      '<button data-act="speak" aria-label="朗读">' + ICON.speak + '</button>' +
       '<button data-act="copy" aria-label="复制">' + ICON.copy + '</button>' +
       (isLast ? '<button data-act="regen" aria-label="重新生成">' + ICON.regen + '</button>' : '') +
       '<button data-act="del" aria-label="删除">' + ICON.del + '</button>';
@@ -1441,6 +1452,7 @@ async function switchConv(id) {
   const c = S.convs.find((x) => x.id === id);
   if (!c) return;
   if (S.streaming) { toast('正在回答，先停下'); return; }
+  stopRead();
   S.current = c;
   await idbPut('meta', id, 'currentId');
   renderMessages(); updateChrome(); renderConvList(); closeDrawer();
@@ -1448,6 +1460,7 @@ async function switchConv(id) {
 
 async function newConversation() {
   if (S.streaming) { toast('正在回答，先停下'); return; }
+  stopRead();
   // 只在内存里建一个草稿：发出第一条消息时才写进列表
   S.current = newConv();
   renderMessages(); updateChrome(); renderConvList(); closeDrawer();
@@ -2210,6 +2223,7 @@ async function runCompletion() {
 }
 
 async function sendUser(text, atts) {
+  stopRead();
   const conv = S.current;
   const msg = { role: 'user', content: text || '', ts: nowTs() };
   if (atts && atts.length) msg.atts = atts;
@@ -2247,6 +2261,99 @@ async function send() {
 /* =========================================================
    消息操作
    ========================================================= */
+/* =========================================================
+   语音朗读
+   ========================================================= */
+const TTS_ICONS = {
+  speak: '<svg viewBox="0 0 24 24"><path d="M5 9.5h3.2L13 6v12l-4.8-3.5H5z"/><path d="M16.5 9.2a4 4 0 0 1 0 5.6"/></svg>',
+  stop: '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor" stroke="none"/></svg>',
+};
+
+let ttsOn = null;
+
+/** 把 Markdown 洗成适合朗读的纯文本 */
+function ttsClean(src) {
+  return String(src || '')
+    .replace(/```[\s\S]*?```/g, '\n（这里有一段代码，略过）\n')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s*\|.*\|\s*$/gm, '')
+    .replace(/^\s*[-:| ]{4,}\s*$/gm, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\$\$?([^$]*)\$\$?/g, '（公式）')
+    .replace(/[*_~]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 20000);
+}
+
+function ttsMark(index) {
+  const box = msgEl();
+  if (!box || !box.querySelectorAll) return;
+  Array.prototype.forEach.call(box.querySelectorAll('.turn [data-act="speak"]'), (b) => {
+    const turn = b.closest ? b.closest('.turn') : null;
+    const i = turn ? parseInt(turn.dataset.i, 10) : -1;
+    const on = i === index;
+    if (b.classList) b.classList.toggle('speaking', on);
+    b.innerHTML = on ? TTS_ICONS.stop : TTS_ICONS.speak;
+  });
+}
+
+function stopRead() {
+  try {
+    if (window.KoudaiTTS && typeof window.KoudaiTTS.stop === 'function') window.KoudaiTTS.stop();
+  } catch (e) { /* 忽略 */ }
+  try {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  } catch (e) { /* 忽略 */ }
+  ttsOn = null;
+  ttsMark(-1);
+}
+
+/** 原生引擎读完时回调 */
+window.__ttsDone = function () {
+  ttsOn = null;
+  ttsMark(-1);
+};
+
+async function readAloud(index) {
+  const c = S.current;
+  const m = c && c.messages[index];
+  if (!m) return;
+  if (ttsOn === index) { stopRead(); return; }
+
+  stopRead();
+  const text = ttsClean(m.content);
+  if (!text) { toast('这条没有可朗读的文字', 2200); return; }
+
+  const rate = Number(S.settings.ttsRate) || 1;
+  let started = false;
+
+  try {
+    if (window.KoudaiTTS && window.KoudaiTTS.ready()) {
+      started = window.KoudaiTTS.speak(text, rate);
+    }
+  } catch (e) { /* 落到浏览器引擎 */ }
+
+  if (!started && window.speechSynthesis && window.SpeechSynthesisUtterance) {
+    try {
+      window.speechSynthesis.cancel();
+      const u = new window.SpeechSynthesisUtterance(text);
+      u.lang = 'zh-CN';
+      u.rate = Math.min(2, Math.max(0.5, rate));
+      u.onend = () => { ttsOn = null; ttsMark(-1); };
+      u.onerror = () => { ttsOn = null; ttsMark(-1); };
+      window.speechSynthesis.speak(u);
+      started = true;
+    } catch (e) { /* 放弃 */ }
+  }
+
+  if (!started) { toast('这台设备没有可用的语音引擎', 3000); return; }
+  ttsOn = index;
+  ttsMark(index);
+}
+
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); toast('已复制'); }
   catch (e) {
@@ -2348,6 +2455,18 @@ function openSettings() {
     $('#fBgDim').value = S.settings.bgDim;
     $('#bgDimVal').textContent = Math.round(Number(S.settings.bgDim) / 0.75 * 100) + '%';
   }
+  if ($('#fTtsRate')) {
+    $('#fTtsRate').value = S.settings.ttsRate;
+    $('#ttsRateVal').textContent = Number(S.settings.ttsRate).toFixed(1) + '×';
+  }
+  const ttsHint = $('#ttsHint');
+  if (ttsHint) {
+    let native = false;
+    try { native = !!(window.KoudaiTTS && window.KoudaiTTS.ready()); } catch (e) { native = false; }
+    if (native) ttsHint.textContent = '使用手机系统自带的语音引擎，离线可用，不花钱。';
+    else if (window.speechSynthesis) ttsHint.textContent = '使用浏览器语音合成；音色取决于系统。';
+    else ttsHint.textContent = '这台设备没检测到语音引擎，朗读会失败。';
+  }
   if ($('#fRichLayout')) $('#fRichLayout').checked = !!S.settings.richLayout;
   if ($('#fReminder')) $('#fReminder').checked = S.settings.reminder !== false;
   if ($('#fLocation')) $('#fLocation').value = S.settings.location || '';
@@ -2366,6 +2485,7 @@ function saveSettingsFromForm() {
   S.settings.temperature = parseFloat($('#fTemp').value);
   if ($('#fBgBright')) S.settings.bgBright = Math.max(0.2, Math.min(1.2, Number($('#fBgBright').value) || DEFAULTS.bgBright));
   if ($('#fBgDim')) S.settings.bgDim = Math.max(0, Math.min(0.75, Number($('#fBgDim').value) || 0));
+  if ($('#fTtsRate')) S.settings.ttsRate = Math.max(0.6, Math.min(1.8, Number($('#fTtsRate').value) || 1));
   applyBgLook();
   if ($('#fRichLayout')) S.settings.richLayout = !!$('#fRichLayout').checked;
   if ($('#fReminder')) S.settings.reminder = !!$('#fReminder').checked;
@@ -2787,7 +2907,9 @@ msgEl().addEventListener('click', (e) => {
   const btn = t && t.closest ? t.closest('[data-act]') : null;
   if (btn) {
     const turn = btn.closest('.turn');
-    if (turn) msgMenu(parseInt(turn.dataset.i, 10));
+    const idx = turn ? parseInt(turn.dataset.i, 10) : -1;
+    if (btn.getAttribute('data-act') === 'speak') { readAloud(idx); return; }
+    if (idx >= 0) msgMenu(idx);
     return;
   }
   const turnEl = t && t.closest ? t.closest('.turn') : null;
@@ -2951,6 +3073,14 @@ function resetBackground() {
   }
   const resetBtn = $('#btnResetBg');
   if (resetBtn) resetBtn.addEventListener('click', resetBackground);
+
+  const ttsRate = $('#fTtsRate');
+  if (ttsRate) {
+    ttsRate.addEventListener('input', () => {
+      const lbl = $('#ttsRateVal');
+      if (lbl) lbl.textContent = Number(ttsRate.value).toFixed(1) + '×';
+    });
+  }
 })();
 
 /* =========================================================

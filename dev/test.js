@@ -10,7 +10,7 @@ const END = '/*__APP_JS_END__*/';
 const i1 = HTML.indexOf(START);
 const i2 = HTML.indexOf(END);
 let src = HTML.slice(i1 + START.length, i2);
-src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { estTokens, md, usageOf, buildRequestMessages, compact, relGroup, downloadFile, saveConv, newConv, S, DEFAULTS };})();');
+src = src.replace(/\}\)\(\);\s*$/, 'globalThis.__KD = { estTokens, md, usageOf, buildRequestMessages, compact, relGroup, downloadFile, saveConv, newConv, ttsClean, S, DEFAULTS };})();');
 
 /* ---------- 断言 ---------- */
 const results = [];
@@ -196,6 +196,13 @@ setTimeout(async () => {
   const users2 = built2.filter((m) => m.role === 'user');
   ok('关掉提醒也照样告诉时间', built2.filter((m) => m.role === 'latest_reminder').length === 0 && /【当前时间】/.test(users2[users2.length - 1].content));
   K.S.settings.reminder = true;
+
+  /* 朗读前的文本清洗 */
+  const spoken = K.ttsClean('# 标题\n\n这是**重点**，见[文档](https://x.com)。\n\n```js\nlet a=1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |');
+  ok('朗读去掉 Markdown 标记', !/[*#\[\]]/.test(spoken) && spoken.includes('重点'), spoken.slice(0, 50));
+  ok('朗读跳过代码块', spoken.includes('代码') && !spoken.includes('let a=1'));
+  ok('朗读丢掉表格', !spoken.includes('| 1 | 2 |'));
+  ok('朗读保留链接文字', spoken.includes('文档') && !spoken.includes('https://'));
 
   console.log(results.join('\n'));
   const fails = results.filter((r) => r.startsWith('FAIL'));

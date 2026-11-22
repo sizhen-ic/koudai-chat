@@ -6,7 +6,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.webkit.ValueCallback;
-import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -27,6 +26,7 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
+    private TtsBridge tts;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -78,7 +78,22 @@ public class MainActivity extends Activity {
         });
 
         web.addJavascriptInterface(new StoreBridge(this), "KoudaiNative");
+
+        // 语音朗读：交给系统 TTS 引擎，不联网
+        tts = new TtsBridge(web);
+        tts.init(this);
+        web.addJavascriptInterface(tts, "KoudaiTTS");
+
         web.loadUrl("https://" + DOMAIN + "/assets/index.html");
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (tts != null) {
+            tts.shutdown();
+            tts = null;
+        }
+        super.onDestroy();
     }
 
     @Override
